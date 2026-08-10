@@ -43,10 +43,13 @@ La partie située entre les deux marqueurs `---` est un en-tête YAML lisible pa
 
 ## Parcours de revue individuelle
 
-1. Ouvrir la fiche sur le site, puis cliquer sur **Commencer la revue**. Le fichier Markdown s'ouvre dans l'éditeur GitHub.
-2. Passer `review_status` de `non_revue` à `en_revue`, modifier la fiche et enregistrer. La carte affiche alors **En revue** et son bouton devient **Revoir la fiche**.
-3. À la fin de la revue, passer `review_status` à `revue` et renseigner `reviewed_on` avec la date ISO, par exemple `2026-08-10`.
-4. En cas de nouvelle revue ultérieure, repasser temporairement la fiche à `en_revue` sans effacer `reviewed_on` : la date reste celle de la dernière revue achevée.
+1. Ouvrir la fiche sur le site, puis cliquer sur **Passer en revue**.
+2. GitHub présente une demande préremplie. Après confirmation, l'automatisation passe la fiche à `en_revue` et republie le site.
+3. La carte affiche alors **En revue** et son bouton devient **Revoir la fiche**. La page détaillée propose aussi **Faire évoluer la fiche**, qui ouvre le Markdown dans l'éditeur GitHub.
+4. À la fin du travail, cliquer sur **Marquer comme revue**. L'automatisation passe la fiche à `revue`, inscrit la date du jour dans `reviewed_on` et republie le site.
+5. Une fiche déjà revue peut repartir en revue ; la date précédente reste visible jusqu'à l'achèvement de la nouvelle passe.
+
+La confirmation GitHub est volontaire : elle authentifie l'auteur sans placer de jeton secret dans le site public. L'automatisation refuse toute demande qui ne provient pas du compte propriétaire `J2M116`.
 
 En local, la même transition peut être effectuée sans modifier l'en-tête à la main :
 

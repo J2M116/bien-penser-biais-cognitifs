@@ -12,6 +12,7 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from urllib.parse import urlencode
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -71,6 +72,7 @@ FRENCH_MONTHS = (
 
 GITHUB_REPOSITORY = "https://github.com/J2M116/bien-penser-biais-cognitifs"
 GITHUB_EDIT_ROOT = f"{GITHUB_REPOSITORY}/edit/main"
+GITHUB_NEW_ISSUE = f"{GITHUB_REPOSITORY}/issues/new"
 
 
 @dataclass(frozen=True)
@@ -260,6 +262,24 @@ def review_metadata(bias: Bias) -> str:
 def edit_url(bias: Bias) -> str:
     relative_path = bias.source_path.relative_to(PROJECT_ROOT).as_posix()
     return f"{GITHUB_EDIT_ROOT}/{relative_path}"
+
+
+def review_request_url(bias: Bias, action: str) -> str:
+    action_labels = {
+        "demarrer": "passer la fiche en revue",
+        "terminer": "marquer la fiche comme revue",
+    }
+    if action not in action_labels:
+        raise ValueError(f"Unknown review action: {action}")
+    title = f"REVUE | {action} | {bias.slug}"
+    body = (
+        "Cette demande a été préparée par le catalogue Bien penser.\n\n"
+        f"- Fiche : **{bias.name_fr}**\n"
+        f"- Action : **{action_labels[action]}**\n\n"
+        "Pour confirmer, créez cette demande sans modifier son titre. "
+        "Elle sera traitée automatiquement puis fermée après la mise à jour du site."
+    )
+    return f"{GITHUB_NEW_ISSUE}?{urlencode({'title': title, 'body': body})}"
 
 
 def page_shell(*, title: str, description: str, relative_root: str, body: str, page_class: str) -> str:
@@ -456,16 +476,18 @@ def render_detail(bias: Bias, previous: Bias | None, following: Bias | None) -> 
         f'<a class="next" href="../{html.escape(following.slug)}/"><span>Fiche suivante →</span><strong>{html.escape(following.name_fr)}</strong></a>'
         if following else "<span></span>"
     )
-    review_action_labels = {
-        "non_revue": "Commencer la revue",
-        "en_revue": "Revoir la fiche",
-        "revue": "Réexaminer la fiche",
-    }
-    review_instructions = {
-        "non_revue": 'Pour démarrer, passez <code>review_status</code> à <code>"en_revue"</code> dans l’en-tête du fichier.',
-        "en_revue": 'Modifiez librement le contenu. À la fin, passez <code>review_status</code> à <code>"revue"</code> et renseignez <code>reviewed_on</code>.',
-        "revue": 'Pour une nouvelle passe, repassez <code>review_status</code> à <code>"en_revue"</code> : la date de la dernière revue achevée sera conservée.',
-    }
+    if bias.review_status == "non_revue":
+        review_controls = f"""<a class="review-action" href="{html.escape(review_request_url(bias, 'demarrer'), quote=True)}" target="_blank" rel="noreferrer">Passer en revue <span aria-hidden="true">→</span></a>
+        <p>GitHub vous demandera de confirmer cette transition. L'état de la fiche sera ensuite mis à jour et republié automatiquement.</p>"""
+    elif bias.review_status == "en_revue":
+        review_controls = f"""<div class="review-button-group">
+          <a class="review-action" href="{html.escape(edit_url(bias), quote=True)}" target="_blank" rel="noreferrer">Faire évoluer la fiche <span aria-hidden="true">↗</span></a>
+          <a class="review-transition" href="{html.escape(review_request_url(bias, 'terminer'), quote=True)}" target="_blank" rel="noreferrer">Marquer comme revue</a>
+        </div>
+        <p>Modifiez le contenu dans GitHub autant de fois que nécessaire. Lorsque la revue est terminée, sa date sera inscrite automatiquement.</p>"""
+    else:
+        review_controls = f"""<a class="review-action" href="{html.escape(review_request_url(bias, 'demarrer'), quote=True)}" target="_blank" rel="noreferrer">Relancer une revue <span aria-hidden="true">→</span></a>
+        <p>Une nouvelle passe conservera la date de la dernière revue achevée jusqu'à la prochaine validation.</p>"""
     review_date = ""
     if bias.reviewed_on:
         review_date = (
@@ -505,9 +527,7 @@ def render_detail(bias: Bias, previous: Bias | None, following: Bias | None) -> 
         {review_date}
       </div>
       <div class="review-panel-actions">
-        <a class="review-action" href="{html.escape(edit_url(bias), quote=True)}" target="_blank" rel="noreferrer">{review_action_labels[bias.review_status]} <span aria-hidden="true">↗</span></a>
-        <p>Le fichier Markdown s'ouvre dans GitHub. Enregistrez vos modifications : le site se mettra ensuite à jour automatiquement.</p>
-        <p class="review-instructions">{review_instructions[bias.review_status]}</p>
+        {review_controls}
       </div>
     </section>
 

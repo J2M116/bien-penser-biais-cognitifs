@@ -1,0 +1,106 @@
+name: Faire évoluer l'état d'une fiche
+
+on:
+  issues:
+    types: [opened]
+
+permissions: {}
+
+concurrency:
+  group: review-state
+  cancel-in-progress: false
+
+jobs:
+  update:
+    if: >-
+      github.actor == 'J2M116' &&
+      startsWith(github.event.issue.title, 'REVUE | ')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Récupérer le catalogue
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Préparer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Valider et appliquer la transition
+        env:
+          REVIEW_REQUEST_TITLE: ${{ github.event.issue.title }}
+        run: python scripts/apply_review_request.py "$REVIEW_REQUEST_TITLE"
+
+      - name: Enregistrer le nouvel état
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+        run: |
+          if git diff --quiet; then
+            echo "La fiche est déjà dans l'état demandé."
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add catalogue/biais
+            git commit -m "Mettre à jour l'état de revue (#${ISSUE_NUMBER})"
+            git push origin main
+          fi
+
+  build:
+    needs: update
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    steps:
+      - name: Récupérer le nouvel état
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Préparer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Générer le site statique
+        run: python scripts/build_site.py --output _site
+
+      - name: Configurer GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Préparer les fichiers à publier
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    steps:
+      - name: Publier le nouvel état
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+  finalize:
+    needs: deploy
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Confirmer et fermer la demande
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_URL: ${{ github.event.issue.html_url }}
+        run: |
+          gh issue comment "$ISSUE_URL" --body "État mis à jour et site republié automatiquement."
+          gh issue close "$ISSUE_URL"

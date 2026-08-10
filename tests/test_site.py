@@ -4,15 +4,17 @@ import sys
 import tempfile
 import unittest
 from dataclasses import replace
+from datetime import date
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 import build_site  # noqa: E402
+import apply_review_request  # noqa: E402
 import set_review_status  # noqa: E402
 
 
@@ -74,7 +76,17 @@ class SiteBuildTests(unittest.TestCase):
         self.assertIn("Revoir la fiche", card)
         self.assertIn("github.com/J2M116/bien-penser-biais-cognitifs/edit/main/", card)
         self.assertIn('target="_blank"', card)
-        self.assertIn("Revoir la fiche", detail)
+        self.assertIn("Faire évoluer la fiche", detail)
+        self.assertIn("Marquer comme revue", detail)
+
+    def test_review_transition_link_prepares_a_github_request(self) -> None:
+        bias = self.biases[0]
+        request = build_site.review_request_url(bias, "demarrer")
+        query = parse_qs(urlsplit(request).query)
+        self.assertEqual(query["title"], [f"REVUE | demarrer | {bias.slug}"])
+        detail = build_site.render_detail(bias, None, None)
+        self.assertIn("Passer en revue", detail)
+        self.assertIn("issues/new?", detail)
 
     def test_reviewed_card_displays_its_date_in_french(self) -> None:
         bias = replace(self.biases[0], review_status="revue", reviewed_on="2026-08-10")
@@ -91,6 +103,30 @@ class SiteBuildTests(unittest.TestCase):
             content = card.read_text(encoding="utf-8")
             self.assertIn('review_status: "en_revue"', content)
             self.assertIn('reviewed_on: "2026-08-10"', content)
+
+    def test_github_request_applies_both_review_transitions(self) -> None:
+        bias = self.biases[0]
+        with tempfile.TemporaryDirectory() as temporary:
+            content_dir = Path(temporary)
+            card = content_dir / bias.source_path.name
+            card.write_text(bias.source_path.read_text(encoding="utf-8"), encoding="utf-8")
+            start = f"REVUE | demarrer | {bias.slug}"
+            finish = f"REVUE | terminer | {bias.slug}"
+            apply_review_request.apply_request(start, content_dir=content_dir)
+            apply_review_request.apply_request(
+                finish,
+                content_dir=content_dir,
+                review_date=date(2026, 8, 10),
+            )
+            content = card.read_text(encoding="utf-8")
+            self.assertIn('review_status: "revue"', content)
+            self.assertIn('reviewed_on: "2026-08-10"', content)
+
+    def test_review_workflow_is_restricted_to_the_repository_owner(self) -> None:
+        workflow = (PROJECT_ROOT / ".github" / "workflows" / "review-state.yml").read_text(encoding="utf-8")
+        self.assertIn("github.actor == 'J2M116'", workflow)
+        self.assertIn("contents: write", workflow)
+        self.assertIn("issues: write", workflow)
 
     def test_documented_content_has_no_placeholders(self) -> None:
         forbidden = ("à rédiger", "à traduire", "à ajouter", "à documenter")
