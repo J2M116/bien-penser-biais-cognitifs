@@ -38,6 +38,8 @@ Le script [`scripts/build_site.py`](scripts/build_site.py) transforme les fiches
 
 - une page d'accueil avec cartes, recherche, filtres et tri ;
 - une page détaillée par biais ;
+- un suivi individuel `non revue` / `en revue` / `revue`, avec date de dernière revue ;
+- un accès direct à l'éditeur GitHub pour faire évoluer chaque fichier Markdown ;
 - une page présentant la méthode et les sources ;
 - une mise en page adaptée aux ordinateurs et téléphones.
 

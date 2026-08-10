@@ -6,12 +6,14 @@
   const search = document.querySelector("#search");
   const importance = document.querySelector("#importance-filter");
   const evidence = document.querySelector("#evidence-filter");
+  const review = document.querySelector("#review-filter");
   const sort = document.querySelector("#sort-order");
   const reset = document.querySelector("#reset-filters");
   const count = document.querySelector("#result-count");
   const empty = document.querySelector("#empty-state");
   const familyButtons = Array.from(document.querySelectorAll("[data-family-filter]"));
   const evidenceRanks = { forte: 0, moderee: 1, limitee: 2, contestee: 3, a_evaluer: 4 };
+  const reviewRanks = { en_revue: 0, non_revue: 1, revue: 2 };
   let selectedFamily = "all";
 
   count.setAttribute("aria-live", "polite");
@@ -27,6 +29,7 @@
     const query = normalize(search.value.trim());
     const minimumImportance = Number.parseInt(importance.value, 10);
     const selectedEvidence = evidence.value;
+    const selectedReview = review.value;
 
     const ordered = [...cards].sort((a, b) => {
       if (sort.value === "alphabetical") {
@@ -34,6 +37,10 @@
       }
       if (sort.value === "evidence") {
         const rank = evidenceRanks[a.dataset.evidence] - evidenceRanks[b.dataset.evidence];
+        if (rank !== 0) return rank;
+      }
+      if (sort.value === "review") {
+        const rank = reviewRanks[a.dataset.review] - reviewRanks[b.dataset.review];
         if (rank !== 0) return rank;
       }
       const importanceDifference = Number(b.dataset.importance) - Number(a.dataset.importance);
@@ -49,7 +56,8 @@
       const matchesFamily = selectedFamily === "all" || card.dataset.family === selectedFamily;
       const matchesImportance = Number(card.dataset.importance) >= minimumImportance;
       const matchesEvidence = selectedEvidence === "all" || card.dataset.evidence === selectedEvidence;
-      const show = matchesSearch && matchesFamily && matchesImportance && matchesEvidence;
+      const matchesReview = selectedReview === "all" || card.dataset.review === selectedReview;
+      const show = matchesSearch && matchesFamily && matchesImportance && matchesEvidence && matchesReview;
       card.hidden = !show;
       if (show) visible += 1;
     });
@@ -58,7 +66,7 @@
     empty.hidden = visible !== 0;
   };
 
-  [search, importance, evidence, sort].forEach((control) => {
+  [search, importance, evidence, review, sort].forEach((control) => {
     control.addEventListener(control === search ? "input" : "change", apply);
   });
 
@@ -78,6 +86,7 @@
     search.value = "";
     importance.value = "0";
     evidence.value = "all";
+    review.value = "all";
     sort.value = "importance";
     selectedFamily = "all";
     familyButtons.forEach((button) => {

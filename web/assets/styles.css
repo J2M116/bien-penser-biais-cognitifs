@@ -281,7 +281,7 @@ select {
 
 .controls {
   display: grid;
-  grid-template-columns: minmax(250px, 1.5fr) repeat(3, minmax(145px, 0.75fr)) auto;
+  grid-template-columns: minmax(230px, 1.45fr) repeat(4, minmax(130px, 0.72fr)) auto;
   gap: 0.75rem;
   align-items: end;
   margin: 2.6rem 0 1.4rem;
@@ -421,6 +421,11 @@ select {
   transform: scaleY(1);
 }
 
+.bias-card[data-review="en_revue"] .card-link {
+  border-color: rgba(185, 137, 63, 0.55);
+  background: linear-gradient(180deg, rgba(229, 201, 143, 0.12), var(--surface) 34%);
+}
+
 .card-topline,
 .card-footer {
   display: flex;
@@ -439,6 +444,63 @@ select {
   font-weight: 750;
   letter-spacing: 0.045em;
   text-transform: uppercase;
+}
+
+.review-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.65rem;
+  align-items: center;
+  margin-top: 0.9rem;
+}
+
+.review-meta time,
+.review-panel-date {
+  color: #6d7884;
+  font-size: 0.68rem;
+}
+
+.review-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+  padding: 0.28rem 0.52rem;
+  border: 1px solid var(--line-strong);
+  color: #66717d;
+  background: rgba(21, 39, 63, 0.035);
+  font-size: 0.62rem;
+  font-weight: 800;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+}
+
+.review-state::before {
+  width: 0.45rem;
+  height: 0.45rem;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  content: "";
+}
+
+.review-state--en_revue {
+  border-color: rgba(185, 137, 63, 0.45);
+  color: #886022;
+  background: rgba(229, 201, 143, 0.22);
+}
+
+.review-state--en_revue::before {
+  background: var(--gold);
+  box-shadow: 0 0 0 3px rgba(185, 137, 63, 0.15);
+}
+
+.review-state--revue {
+  border-color: rgba(80, 110, 97, 0.36);
+  color: #38584b;
+  background: rgba(80, 110, 97, 0.1);
+}
+
+.review-state--revue::before {
+  background: var(--sage);
 }
 
 .card-number,
@@ -678,6 +740,80 @@ select {
   font-weight: 700;
   letter-spacing: 0.05em;
   text-transform: uppercase;
+}
+
+.review-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(260px, 0.8fr);
+  gap: clamp(2rem, 6vw, 5rem);
+  align-items: center;
+  margin-bottom: 1.5rem;
+  padding: clamp(1.6rem, 4vw, 2.6rem);
+  color: white;
+  background:
+    radial-gradient(circle at 88% 18%, rgba(229, 201, 143, 0.16), transparent 17rem),
+    var(--ink);
+}
+
+.review-panel .section-kicker {
+  margin-bottom: 0.35rem;
+}
+
+.review-panel h2 {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: clamp(1.9rem, 4vw, 2.8rem);
+  font-weight: 400;
+}
+
+.review-panel p {
+  max-width: 650px;
+  margin: 0.55rem 0 0;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 0.86rem;
+  line-height: 1.65;
+}
+
+.review-panel .review-panel-date {
+  color: var(--gold-light);
+  font-weight: 700;
+}
+
+.review-panel .review-instructions {
+  color: rgba(255, 255, 255, 0.82);
+}
+
+.review-panel code {
+  padding: 0.1rem 0.28rem;
+  color: var(--gold-light);
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 0.78em;
+}
+
+.review-panel-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.review-action {
+  display: inline-flex;
+  gap: 0.7rem;
+  align-items: center;
+  justify-content: space-between;
+  min-width: min(100%, 250px);
+  padding: 0.9rem 1rem;
+  color: var(--ink);
+  background: var(--gold-light);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.045em;
+  text-decoration: none;
+  text-transform: uppercase;
+}
+
+.review-action:hover {
+  background: #f0d8a6;
 }
 
 .article-layout {
@@ -987,6 +1123,10 @@ select {
   }
 
   .article-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .review-panel {
     grid-template-columns: 1fr;
   }
 

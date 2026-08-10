@@ -14,6 +14,8 @@ family: "a_classer"
 parent_id: null
 importance: null
 evidence_level: "a_evaluer"
+review_status: "non_revue"
+reviewed_on: null
 fact_checking_relevant: false
 review_flags:
   - "broad_family_candidate"

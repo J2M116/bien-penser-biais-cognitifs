@@ -10,6 +10,7 @@ import re
 import shutil
 from collections import Counter
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 
@@ -40,6 +41,37 @@ EVIDENCE_LABELS = {
 
 EVIDENCE_ORDER = {"forte": 0, "moderee": 1, "limitee": 2, "contestee": 3, "a_evaluer": 4}
 
+REVIEW_LABELS = {
+    "non_revue": "Non revue",
+    "en_revue": "En revue",
+    "revue": "Revue",
+}
+
+REVIEW_DESCRIPTIONS = {
+    "non_revue": "Cette fiche n'a pas encore fait l'objet d'une revue individuelle.",
+    "en_revue": "La revue individuelle de cette fiche est en cours.",
+    "revue": "Cette fiche a fait l'objet d'une revue individuelle achevée.",
+}
+
+FRENCH_MONTHS = (
+    "",
+    "janvier",
+    "février",
+    "mars",
+    "avril",
+    "mai",
+    "juin",
+    "juillet",
+    "août",
+    "septembre",
+    "octobre",
+    "novembre",
+    "décembre",
+)
+
+GITHUB_REPOSITORY = "https://github.com/J2M116/bien-penser-biais-cognitifs"
+GITHUB_EDIT_ROOT = f"{GITHUB_REPOSITORY}/edit/main"
+
 
 @dataclass(frozen=True)
 class Bias:
@@ -58,6 +90,8 @@ class Bias:
     limits: str
     prevention: tuple[str, ...]
     sources: tuple[tuple[str, str], ...]
+    review_status: str
+    reviewed_on: str | None
     source_path: Path
 
 
@@ -138,6 +172,18 @@ def read_bias(path: Path) -> Bias | None:
     importance = parse_scalar(front, "importance")
     if not isinstance(importance, int):
         raise ValueError(f"Missing importance: {path}")
+    review_status = str(parse_scalar(front, "review_status", "non_revue"))
+    if review_status not in REVIEW_LABELS:
+        raise ValueError(f"Invalid review status {review_status!r}: {path}")
+    reviewed_on = parse_scalar(front, "reviewed_on")
+    if reviewed_on is not None:
+        reviewed_on = str(reviewed_on)
+        try:
+            date.fromisoformat(reviewed_on)
+        except ValueError as error:
+            raise ValueError(f"Invalid review date {reviewed_on!r}: {path}") from error
+    if review_status == "revue" and reviewed_on is None:
+        raise ValueError(f"A reviewed card must have a review date: {path}")
     return Bias(
         number=int(parse_scalar(front, "source_number")),
         slug=path.stem,
@@ -154,6 +200,8 @@ def read_bias(path: Path) -> Bias | None:
         limits=paragraphs(section(body, "Limites et nuances")),
         prevention=bullet_values(section(body, "Prévention")),
         sources=source_values(section(body, "Sources de départ")),
+        review_status=review_status,
+        reviewed_on=reviewed_on,
         source_path=path,
     )
 
@@ -189,6 +237,31 @@ def family_badge(family: str) -> str:
     return f'<span class="family-tag">{html.escape(FAMILY_LABELS.get(family, family))}</span>'
 
 
+def format_review_date(value: str) -> str:
+    parsed = date.fromisoformat(value)
+    return f"{parsed.day} {FRENCH_MONTHS[parsed.month]} {parsed.year}"
+
+
+def review_badge(bias: Bias) -> str:
+    label = REVIEW_LABELS[bias.review_status]
+    return (
+        f'<span class="review-state review-state--{html.escape(bias.review_status)}">'
+        f'{html.escape(label)}</span>'
+    )
+
+
+def review_metadata(bias: Bias) -> str:
+    reviewed_date = ""
+    if bias.reviewed_on:
+        reviewed_date = f'<time datetime="{bias.reviewed_on}">Dernière revue : {format_review_date(bias.reviewed_on)}</time>'
+    return f'<div class="review-meta">{review_badge(bias)}{reviewed_date}</div>'
+
+
+def edit_url(bias: Bias) -> str:
+    relative_path = bias.source_path.relative_to(PROJECT_ROOT).as_posix()
+    return f"{GITHUB_EDIT_ROOT}/{relative_path}"
+
+
 def page_shell(*, title: str, description: str, relative_root: str, body: str, page_class: str) -> str:
     return f"""<!doctype html>
 <html lang="fr">
@@ -213,15 +286,26 @@ def render_card(bias: Bias) -> str:
     search_text = " ".join(
         [bias.name_fr, bias.name_en, *bias.aliases_fr, FAMILY_LABELS.get(bias.family, bias.family), bias.short]
     ).casefold()
+    reviewing = bias.review_status == "en_revue"
+    target_url = edit_url(bias) if reviewing else f"biais/{bias.slug}/"
+    action_label = "Revoir la fiche" if reviewing else "Lire la fiche"
+    target_attributes = ' target="_blank" rel="noreferrer"' if reviewing else ""
+    aria_label = (
+        f"Revoir la fiche {bias.name_fr} dans l'éditeur GitHub"
+        if reviewing
+        else f"Ouvrir la fiche {bias.name_fr}"
+    )
     return f"""<article class="bias-card" data-bias-card data-family="{html.escape(bias.family)}"
     data-importance="{bias.importance}" data-evidence="{html.escape(bias.evidence)}"
+    data-review="{html.escape(bias.review_status)}"
     data-name="{html.escape(bias.name_fr.casefold(), quote=True)}"
     data-search="{html.escape(search_text, quote=True)}">
-  <a class="card-link" href="biais/{html.escape(bias.slug)}/" aria-label="Ouvrir la fiche {html.escape(bias.name_fr, quote=True)}">
+  <a class="card-link" href="{html.escape(target_url, quote=True)}" aria-label="{html.escape(aria_label, quote=True)}"{target_attributes}>
     <div class="card-topline">
       {family_badge(bias.family)}
       <span class="card-number">Nº {bias.number}</span>
     </div>
+    {review_metadata(bias)}
     <h2>{html.escape(bias.name_fr)}</h2>
     <p class="english-name" lang="en">{html.escape(bias.name_en)}</p>
     <p class="card-summary">{inline_markdown(bias.short)}</p>
@@ -230,13 +314,14 @@ def render_card(bias: Bias) -> str:
       {importance_marks(bias.importance)}
       {evidence_badge(bias.evidence)}
     </div>
-    <span class="card-open" aria-hidden="true">Lire la fiche <span>→</span></span>
+    <span class="card-open" aria-hidden="true">{action_label} <span>→</span></span>
   </a>
 </article>"""
 
 
 def render_home(biases: list[Bias]) -> str:
     families = Counter(bias.family for bias in biases)
+    reviews = Counter(bias.review_status for bias in biases)
     family_buttons = "\n".join(
         f'<button class="filter-chip" type="button" data-family-filter="{html.escape(key)}" aria-pressed="false">'
         f'{html.escape(FAMILY_LABELS[key])}<span>{count}</span></button>'
@@ -261,8 +346,9 @@ def render_home(biases: list[Bias]) -> str:
       <p class="hero-intro">Une carte pour comprendre l'essentiel. Une fiche pour examiner les preuves, les limites et les moyens d'agir.</p>
       <div class="hero-stats" aria-label="Contenu du catalogue">
         <span><strong>{len(biases)}</strong> fiches documentées</span>
+        <span><strong>{reviews['revue']}</strong> fiches revues</span>
+        <span><strong>{reviews['en_revue']}</strong> en cours de revue</span>
         <span><strong>{len(families)}</strong> familles</span>
-        <span><strong>2</strong> niveaux de lecture</span>
       </div>
     </div>
     <blockquote>
@@ -305,11 +391,21 @@ def render_home(biases: list[Bias]) -> str:
         </select>
       </label>
       <label>
+        <span>État de la revue</span>
+        <select id="review-filter">
+          <option value="all">Tous</option>
+          <option value="non_revue">Non revues</option>
+          <option value="en_revue">En revue</option>
+          <option value="revue">Revues</option>
+        </select>
+      </label>
+      <label>
         <span>Trier par</span>
         <select id="sort-order">
           <option value="importance">Importance</option>
           <option value="alphabetical">Ordre alphabétique</option>
           <option value="evidence">Solidité des preuves</option>
+          <option value="review">État de la revue</option>
         </select>
       </label>
       <button id="reset-filters" class="reset-button" type="button">Réinitialiser</button>
@@ -360,6 +456,22 @@ def render_detail(bias: Bias, previous: Bias | None, following: Bias | None) -> 
         f'<a class="next" href="../{html.escape(following.slug)}/"><span>Fiche suivante →</span><strong>{html.escape(following.name_fr)}</strong></a>'
         if following else "<span></span>"
     )
+    review_action_labels = {
+        "non_revue": "Commencer la revue",
+        "en_revue": "Revoir la fiche",
+        "revue": "Réexaminer la fiche",
+    }
+    review_instructions = {
+        "non_revue": 'Pour démarrer, passez <code>review_status</code> à <code>"en_revue"</code> dans l’en-tête du fichier.',
+        "en_revue": 'Modifiez librement le contenu. À la fin, passez <code>review_status</code> à <code>"revue"</code> et renseignez <code>reviewed_on</code>.',
+        "revue": 'Pour une nouvelle passe, repassez <code>review_status</code> à <code>"en_revue"</code> : la date de la dernière revue achevée sera conservée.',
+    }
+    review_date = ""
+    if bias.reviewed_on:
+        review_date = (
+            f'<p class="review-panel-date">Dernière revue achevée le '
+            f'<time datetime="{bias.reviewed_on}">{format_review_date(bias.reviewed_on)}</time>.</p>'
+        )
     body = f"""<header class="site-header detail-header">
   <div class="header-inner">
     <a class="wordmark" href="../../" aria-label="Bien penser, retour au catalogue">
@@ -373,7 +485,7 @@ def render_detail(bias: Bias, previous: Bias | None, following: Bias | None) -> 
 <main id="contenu" class="detail-main">
   <article>
     <header class="bias-hero">
-      <div class="detail-badges">{family_badge(bias.family)} {evidence_badge(bias.evidence)}</div>
+      <div class="detail-badges">{family_badge(bias.family)} {evidence_badge(bias.evidence)} {review_badge(bias)}</div>
       <p class="detail-number">Fiche nº {bias.number}</p>
       <h1>{html.escape(bias.name_fr)}</h1>
       <p class="detail-english" lang="en">{html.escape(bias.name_en)}</p>
@@ -384,6 +496,20 @@ def render_detail(bias: Bias, previous: Bias | None, following: Bias | None) -> 
         {importance_marks(bias.importance)}
       </div>
     </header>
+
+    <section class="review-panel" aria-labelledby="review-panel-title">
+      <div>
+        <p class="section-kicker">Suivi éditorial</p>
+        <h2 id="review-panel-title">{REVIEW_LABELS[bias.review_status]}</h2>
+        <p>{REVIEW_DESCRIPTIONS[bias.review_status]}</p>
+        {review_date}
+      </div>
+      <div class="review-panel-actions">
+        <a class="review-action" href="{html.escape(edit_url(bias), quote=True)}" target="_blank" rel="noreferrer">{review_action_labels[bias.review_status]} <span aria-hidden="true">↗</span></a>
+        <p>Le fichier Markdown s'ouvre dans GitHub. Enregistrez vos modifications : le site se mettra ensuite à jour automatiquement.</p>
+        <p class="review-instructions">{review_instructions[bias.review_status]}</p>
+      </div>
+    </section>
 
     <div class="article-layout">
       <aside class="example-panel">
@@ -442,6 +568,7 @@ def render_detail(bias: Bias, previous: Bias | None, following: Bias | None) -> 
 
 def render_about(biases: list[Bias]) -> str:
     evidence_counts = Counter(bias.evidence for bias in biases)
+    review_counts = Counter(bias.review_status for bias in biases)
     body = f"""<header class="site-header detail-header">
   <div class="header-inner">
     <a class="wordmark" href="../" aria-label="Bien penser, retour au catalogue">
@@ -471,7 +598,7 @@ def render_about(biases: list[Bias]) -> str:
     <section>
       <span class="about-number">03</span>
       <h2>Un contenu évolutif</h2>
-      <p>Cette première version publie {len(biases)} fiches : {evidence_counts['forte']} à preuves fortes, {evidence_counts['moderee']} modérées, {evidence_counts['limitee']} limitée et {evidence_counts['contestee']} contestées.</p>
+      <p>Cette version publie {len(biases)} fiches : {review_counts['revue']} revues, {review_counts['en_revue']} en revue et {review_counts['non_revue']} non revues. Chaque statut et chaque date de revue proviennent du fichier Markdown de la fiche.</p>
     </section>
   </div>
   <section class="pascal-panel">

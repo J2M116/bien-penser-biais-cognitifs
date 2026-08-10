@@ -224,6 +224,8 @@ def card_content(number: int, original_label: str) -> str:
         "parent_id: null",
         "importance: null",
         'evidence_level: "a_evaluer"',
+        'review_status: "non_revue"',
+        "reviewed_on: null",
         f"fact_checking_relevant: {'true' if fact_checking else 'false'}",
         "review_flags:",
         *render_list(metadata["flags"], indent=2),

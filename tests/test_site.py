@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import unittest
+from dataclasses import replace
 from html.parser import HTMLParser
 from pathlib import Path
 from urllib.parse import unquote, urlsplit
@@ -12,6 +13,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
 
 import build_site  # noqa: E402
+import set_review_status  # noqa: E402
 
 
 class LinkParser(HTMLParser):
@@ -53,7 +55,42 @@ class SiteBuildTests(unittest.TestCase):
         self.assertIn('id="search"', home)
         self.assertIn('id="importance-filter"', home)
         self.assertIn('id="evidence-filter"', home)
+        self.assertIn('id="review-filter"', home)
         self.assertIn('data-family-filter="all"', home)
+        review_states = ("non_revue", "en_revue", "revue")
+        self.assertEqual(sum(home.count(f'data-review="{state}"') for state in review_states), 39)
+        self.assertEqual(sum(home.count(f'review-state--{state}">') for state in review_states), 39)
+
+    def test_every_source_card_has_review_metadata(self) -> None:
+        for source in build_site.CONTENT_DIR.glob("*.md"):
+            content = source.read_text(encoding="utf-8")
+            self.assertRegex(content, r'(?m)^review_status: "(?:non_revue|en_revue|revue)"$', source)
+            self.assertRegex(content, r'(?m)^reviewed_on: (?:null|"\d{4}-\d{2}-\d{2}")$', source)
+
+    def test_in_review_card_opens_the_github_editor(self) -> None:
+        bias = replace(self.biases[0], review_status="en_revue")
+        card = build_site.render_card(bias)
+        detail = build_site.render_detail(bias, None, None)
+        self.assertIn("Revoir la fiche", card)
+        self.assertIn("github.com/J2M116/bien-penser-biais-cognitifs/edit/main/", card)
+        self.assertIn('target="_blank"', card)
+        self.assertIn("Revoir la fiche", detail)
+
+    def test_reviewed_card_displays_its_date_in_french(self) -> None:
+        bias = replace(self.biases[0], review_status="revue", reviewed_on="2026-08-10")
+        card = build_site.render_card(bias)
+        self.assertIn("Revue", card)
+        self.assertIn("Dernière revue : 10 août 2026", card)
+
+    def test_review_status_helper_preserves_the_previous_review_date(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            card = Path(temporary) / "card.md"
+            card.write_text(self.biases[0].source_path.read_text(encoding="utf-8"), encoding="utf-8")
+            set_review_status.update_review(card, "revue", "2026-08-10")
+            set_review_status.update_review(card, "en_revue")
+            content = card.read_text(encoding="utf-8")
+            self.assertIn('review_status: "en_revue"', content)
+            self.assertIn('reviewed_on: "2026-08-10"', content)
 
     def test_documented_content_has_no_placeholders(self) -> None:
         forbidden = ("à rédiger", "à traduire", "à ajouter", "à documenter")

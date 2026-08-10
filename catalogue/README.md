@@ -26,7 +26,9 @@ La partie située entre les deux marqueurs `---` est un en-tête YAML lisible pa
 | `importance` | Importance pratique | Entier de 1 à 5 ou `null` |
 | `importance_status` | Maturité du score | `provisoire` tant que les quatre axes ne sont pas documentés |
 | `evidence_level` | Solidité des preuves | `a_evaluer`, `limitee`, `moderee`, `forte`, `contestee` |
-| `reviewed_on` | Date de la dernière passe éditoriale | Date ISO `AAAA-MM-JJ` |
+| `documented_on` | Date de la première rédaction documentée | Date ISO `AAAA-MM-JJ` ou champ absent |
+| `review_status` | État de la revue individuelle | `non_revue`, `en_revue`, `revue` |
+| `reviewed_on` | Date de la dernière revue individuelle achevée | Date ISO `AAAA-MM-JJ` ou `null` |
 | `fact_checking_relevant` | Sélection de l'article source | `true` ou `false` |
 | `review_flags` | Points à contrôler | Liste de codes explicites |
 | `relations` | Entrées proches | Liste d'identifiants |
@@ -38,6 +40,20 @@ La partie située entre les deux marqueurs `---` est un en-tête YAML lisible pa
 3. Ne pas fusionner deux fiches tant que la relation n'est pas soutenue par une source scientifique.
 4. Ne pas confondre importance pratique et solidité des preuves.
 5. Paraphraser les définitions ; ne pas recopier de longs passages protégés.
+
+## Parcours de revue individuelle
+
+1. Ouvrir la fiche sur le site, puis cliquer sur **Commencer la revue**. Le fichier Markdown s'ouvre dans l'éditeur GitHub.
+2. Passer `review_status` de `non_revue` à `en_revue`, modifier la fiche et enregistrer. La carte affiche alors **En revue** et son bouton devient **Revoir la fiche**.
+3. À la fin de la revue, passer `review_status` à `revue` et renseigner `reviewed_on` avec la date ISO, par exemple `2026-08-10`.
+4. En cas de nouvelle revue ultérieure, repasser temporairement la fiche à `en_revue` sans effacer `reviewed_on` : la date reste celle de la dernière revue achevée.
+
+En local, la même transition peut être effectuée sans modifier l'en-tête à la main :
+
+```sh
+python3 scripts/set_review_status.py catalogue/biais/037-confirmation-bias.md en_revue
+python3 scripts/set_review_status.py catalogue/biais/037-confirmation-bias.md revue
+```
 
 ## Import reproductible
 

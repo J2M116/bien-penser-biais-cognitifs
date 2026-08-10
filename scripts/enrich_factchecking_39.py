@@ -14,7 +14,7 @@ from pathlib import Path
 
 
 SOURCE_URL = "https://doi.org/10.1016/j.ipm.2024.103672"
-REVIEW_DATE = "2026-08-10"
+DOCUMENTATION_DATE = "2026-08-10"
 
 
 @dataclass(frozen=True)
@@ -446,6 +446,15 @@ def upsert_after(text: str, after_key: str, key: str, value: str) -> str:
     )
 
 
+def upsert_null_after(text: str, after_key: str, key: str) -> str:
+    rendered = f"{key}: null"
+    if re.search(rf"^{re.escape(key)}:", text, flags=re.MULTILINE):
+        return re.sub(rf"^{re.escape(key)}:.*$", rendered, text, count=1, flags=re.MULTILINE)
+    return re.sub(
+        rf"^({re.escape(after_key)}:.*)$", rf"\1\n{rendered}", text, count=1, flags=re.MULTILINE
+    )
+
+
 def render_body(name_en: str, item: Entry) -> str:
     evidence_label = EVIDENCE_LABELS[item.evidence]
     prevention = "\n".join(f"- {action}" for action in item.prevention)
@@ -504,7 +513,9 @@ def enrich(path: Path, item: Entry) -> None:
     front = replace_scalar(front, "importance", item.importance)
     front = upsert_after(front, "importance", "importance_status", "provisoire")
     front = replace_scalar(front, "evidence_level", item.evidence)
-    front = upsert_after(front, "evidence_level", "reviewed_on", REVIEW_DATE)
+    front = upsert_after(front, "evidence_level", "documented_on", DOCUMENTATION_DATE)
+    front = upsert_after(front, "documented_on", "review_status", "non_revue")
+    front = upsert_null_after(front, "review_status", "reviewed_on")
     path.write_text(front + "\n\n" + render_body(name_en, item), encoding="utf-8")
 
 
