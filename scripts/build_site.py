@@ -1,0 +1,569 @@
+#!/usr/bin/env python3
+"""Build the static cognitive-bias catalogue without third-party packages."""
+
+from __future__ import annotations
+
+import argparse
+import html
+import json
+import re
+import shutil
+from collections import Counter
+from dataclasses import dataclass
+from pathlib import Path
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+CONTENT_DIR = PROJECT_ROOT / "catalogue" / "biais"
+WEB_DIR = PROJECT_ROOT / "web"
+BUILD_MARKER = ".bien-penser-build"
+
+FAMILY_LABELS = {
+    "affect_emotion": "Émotions",
+    "attention_perception": "Attention et perception",
+    "croyances_preuves": "Croyances et preuves",
+    "probabilite_estimation": "Probabilité et estimation",
+    "memoire_temps": "Mémoire et temps",
+    "decision_action": "Décision et action",
+    "influence_sociale": "Influence sociale",
+    "attribution_groupes": "Attribution et groupes",
+    "metacognition_confiance": "Confiance et métacognition",
+}
+
+EVIDENCE_LABELS = {
+    "forte": "Preuves fortes",
+    "moderee": "Preuves modérées",
+    "limitee": "Preuves limitées",
+    "contestee": "Preuves contestées",
+    "a_evaluer": "Preuves à évaluer",
+}
+
+EVIDENCE_ORDER = {"forte": 0, "moderee": 1, "limitee": 2, "contestee": 3, "a_evaluer": 4}
+
+
+@dataclass(frozen=True)
+class Bias:
+    number: int
+    slug: str
+    name_fr: str
+    name_en: str
+    aliases_fr: tuple[str, ...]
+    family: str
+    importance: int
+    evidence: str
+    short: str
+    example: str
+    detail: str
+    why: str
+    limits: str
+    prevention: tuple[str, ...]
+    sources: tuple[tuple[str, str], ...]
+    source_path: Path
+
+
+def parse_scalar(front: str, key: str, default: object = None) -> object:
+    match = re.search(rf"^{re.escape(key)}:\s*(.*?)\s*$", front, flags=re.MULTILINE)
+    if not match:
+        return default
+    raw = match.group(1)
+    if raw == "null":
+        return None
+    if raw in {"true", "false"}:
+        return raw == "true"
+    if re.fullmatch(r"-?\d+", raw):
+        return int(raw)
+    if raw.startswith('"'):
+        return json.loads(raw)
+    return raw
+
+
+def parse_list(front: str, key: str) -> tuple[str, ...]:
+    match = re.search(
+        rf"^{re.escape(key)}:(?:\s*\[\])?(?P<items>(?:\n  - .*)*)",
+        front,
+        flags=re.MULTILINE,
+    )
+    if not match:
+        return ()
+    values = []
+    for raw in re.findall(r"^  - (.*)$", match.group("items"), flags=re.MULTILINE):
+        values.append(json.loads(raw) if raw.startswith('"') else raw)
+    return tuple(values)
+
+
+def section(body: str, title: str) -> str:
+    match = re.search(
+        rf"^## {re.escape(title)}\s*$\n(?P<content>.*?)(?=^## |\Z)",
+        body,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    return match.group("content").strip() if match else ""
+
+
+def card_value(body: str, label: str) -> str:
+    content = section(body, "Carte")
+    match = re.search(rf"^- \*\*{re.escape(label)}\s*:\*\*\s*(.+)$", content, flags=re.MULTILINE)
+    if not match:
+        raise ValueError(f"Card field not found: {label}")
+    return match.group(1).strip()
+
+
+def paragraphs(raw: str) -> str:
+    return "\n\n".join(
+        " ".join(line.strip() for line in block.splitlines())
+        for block in re.split(r"\n\s*\n", raw.strip())
+        if block.strip() and not block.lstrip().startswith("-")
+    )
+
+
+def bullet_values(raw: str) -> tuple[str, ...]:
+    return tuple(match.group(1).strip() for match in re.finditer(r"^-\s+(.+)$", raw, flags=re.MULTILINE))
+
+
+def source_values(raw: str) -> tuple[tuple[str, str], ...]:
+    return tuple(
+        (match.group(1).strip(), match.group(2).strip())
+        for match in re.finditer(r"^- \[(.+?)\]\((https://.+?)\)$", raw, flags=re.MULTILINE)
+    )
+
+
+def read_bias(path: Path) -> Bias | None:
+    text = path.read_text(encoding="utf-8")
+    pieces = text.split("---", 2)
+    if len(pieces) != 3:
+        raise ValueError(f"Invalid front matter: {path}")
+    front, body = pieces[1], pieces[2].strip()
+    if parse_scalar(front, "status") != "documente":
+        return None
+    importance = parse_scalar(front, "importance")
+    if not isinstance(importance, int):
+        raise ValueError(f"Missing importance: {path}")
+    return Bias(
+        number=int(parse_scalar(front, "source_number")),
+        slug=path.stem,
+        name_fr=str(parse_scalar(front, "name_fr")),
+        name_en=str(parse_scalar(front, "name_en")),
+        aliases_fr=parse_list(front, "aliases_fr"),
+        family=str(parse_scalar(front, "family")),
+        importance=importance,
+        evidence=str(parse_scalar(front, "evidence_level")),
+        short=card_value(body, "En bref"),
+        example=card_value(body, "Exemple"),
+        detail=paragraphs(section(body, "Description détaillée")),
+        why=paragraphs(section(body, "Pourquoi c'est important")),
+        limits=paragraphs(section(body, "Limites et nuances")),
+        prevention=bullet_values(section(body, "Prévention")),
+        sources=source_values(section(body, "Sources de départ")),
+        source_path=path,
+    )
+
+
+def inline_markdown(value: str) -> str:
+    escaped = html.escape(value, quote=False)
+    escaped = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped)
+    escaped = re.sub(r"\*(.+?)\*", r"<em>\1</em>", escaped)
+    return escaped
+
+
+def render_paragraphs(value: str) -> str:
+    return "\n".join(f"<p>{inline_markdown(block)}</p>" for block in value.split("\n\n") if block)
+
+
+def importance_marks(level: int, *, label: bool = True) -> str:
+    marks = "".join(
+        f'<span class="importance-mark{" is-active" if point <= level else ""}" aria-hidden="true"></span>'
+        for point in range(1, 6)
+    )
+    aria = f' aria-label="Importance {level} sur 5"' if label else ""
+    return f'<span class="importance"{aria}>{marks}<span class="importance-value">{level}/5</span></span>'
+
+
+def evidence_badge(evidence: str) -> str:
+    return (
+        f'<span class="evidence evidence--{html.escape(evidence)}">'
+        f'{html.escape(EVIDENCE_LABELS.get(evidence, evidence))}</span>'
+    )
+
+
+def family_badge(family: str) -> str:
+    return f'<span class="family-tag">{html.escape(FAMILY_LABELS.get(family, family))}</span>'
+
+
+def page_shell(*, title: str, description: str, relative_root: str, body: str, page_class: str) -> str:
+    return f"""<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="{html.escape(description, quote=True)}">
+  <meta name="theme-color" content="#15273f">
+  <title>{html.escape(title)}</title>
+  <link rel="stylesheet" href="{relative_root}assets/styles.css">
+  <script src="{relative_root}assets/app.js" defer></script>
+</head>
+<body class="{page_class}">
+  <a class="skip-link" href="#contenu">Aller au contenu</a>
+  {body}
+</body>
+</html>
+"""
+
+
+def render_card(bias: Bias) -> str:
+    search_text = " ".join(
+        [bias.name_fr, bias.name_en, *bias.aliases_fr, FAMILY_LABELS.get(bias.family, bias.family), bias.short]
+    ).casefold()
+    return f"""<article class="bias-card" data-bias-card data-family="{html.escape(bias.family)}"
+    data-importance="{bias.importance}" data-evidence="{html.escape(bias.evidence)}"
+    data-name="{html.escape(bias.name_fr.casefold(), quote=True)}"
+    data-search="{html.escape(search_text, quote=True)}">
+  <a class="card-link" href="biais/{html.escape(bias.slug)}/" aria-label="Ouvrir la fiche {html.escape(bias.name_fr, quote=True)}">
+    <div class="card-topline">
+      {family_badge(bias.family)}
+      <span class="card-number">Nº {bias.number}</span>
+    </div>
+    <h2>{html.escape(bias.name_fr)}</h2>
+    <p class="english-name" lang="en">{html.escape(bias.name_en)}</p>
+    <p class="card-summary">{inline_markdown(bias.short)}</p>
+    <div class="card-example"><span>Exemple</span><p>{inline_markdown(bias.example)}</p></div>
+    <div class="card-footer">
+      {importance_marks(bias.importance)}
+      {evidence_badge(bias.evidence)}
+    </div>
+    <span class="card-open" aria-hidden="true">Lire la fiche <span>→</span></span>
+  </a>
+</article>"""
+
+
+def render_home(biases: list[Bias]) -> str:
+    families = Counter(bias.family for bias in biases)
+    family_buttons = "\n".join(
+        f'<button class="filter-chip" type="button" data-family-filter="{html.escape(key)}" aria-pressed="false">'
+        f'{html.escape(FAMILY_LABELS[key])}<span>{count}</span></button>'
+        for key, count in sorted(families.items(), key=lambda item: FAMILY_LABELS[item[0]])
+    )
+    cards = "\n".join(render_card(bias) for bias in biases)
+    body = f"""<header class="site-header">
+  <div class="header-inner">
+    <a class="wordmark" href="./" aria-label="Bien penser, accueil">
+      <span class="wordmark-mark" aria-hidden="true">P</span>
+      <span><strong>Bien penser</strong><small>Les biais cognitifs</small></span>
+    </a>
+    <a class="about-link" href="a-propos/">À propos</a>
+  </div>
+</header>
+
+<main id="contenu">
+  <section class="hero" aria-labelledby="hero-title">
+    <div class="hero-copy">
+      <p class="eyebrow">Un catalogue critique et évolutif</p>
+      <h1 id="hero-title">Voir les raccourcis<br>qui orientent nos jugements.</h1>
+      <p class="hero-intro">Une carte pour comprendre l'essentiel. Une fiche pour examiner les preuves, les limites et les moyens d'agir.</p>
+      <div class="hero-stats" aria-label="Contenu du catalogue">
+        <span><strong>{len(biases)}</strong> fiches documentées</span>
+        <span><strong>{len(families)}</strong> familles</span>
+        <span><strong>2</strong> niveaux de lecture</span>
+      </div>
+    </div>
+    <blockquote>
+      <p>« Travaillons donc à bien penser : voilà le principe de la morale. »</p>
+      <footer>Blaise Pascal, <cite>Pensées</cite></footer>
+    </blockquote>
+  </section>
+
+  <section class="catalogue" aria-labelledby="catalogue-title">
+    <div class="catalogue-heading">
+      <div>
+        <p class="eyebrow">Explorer</p>
+        <h2 id="catalogue-title">Les biais prioritaires</h2>
+      </div>
+      <p><span id="result-count">{len(biases)}</span> fiches affichées</p>
+    </div>
+
+    <div class="controls" aria-label="Recherche et filtres">
+      <label class="search-field">
+        <span>Rechercher</span>
+        <input id="search" type="search" placeholder="Un biais, un exemple, un mot…" autocomplete="off">
+      </label>
+      <label>
+        <span>Importance minimale</span>
+        <select id="importance-filter">
+          <option value="0">Toutes</option>
+          <option value="5">5 — critique</option>
+          <option value="4">4 — élevée</option>
+          <option value="3">3 — modérée</option>
+        </select>
+      </label>
+      <label>
+        <span>Solidité des preuves</span>
+        <select id="evidence-filter">
+          <option value="all">Toutes</option>
+          <option value="forte">Fortes</option>
+          <option value="moderee">Modérées</option>
+          <option value="limitee">Limitées</option>
+          <option value="contestee">Contestées</option>
+        </select>
+      </label>
+      <label>
+        <span>Trier par</span>
+        <select id="sort-order">
+          <option value="importance">Importance</option>
+          <option value="alphabetical">Ordre alphabétique</option>
+          <option value="evidence">Solidité des preuves</option>
+        </select>
+      </label>
+      <button id="reset-filters" class="reset-button" type="button">Réinitialiser</button>
+    </div>
+
+    <div class="family-filters" aria-label="Filtrer par famille">
+      <button class="filter-chip is-active" type="button" data-family-filter="all" aria-pressed="true">Toutes<span>{len(biases)}</span></button>
+      {family_buttons}
+    </div>
+
+    <div id="bias-grid" class="bias-grid">
+      {cards}
+    </div>
+    <div id="empty-state" class="empty-state" hidden>
+      <strong>Aucune fiche ne correspond.</strong>
+      <p>Essayez un autre mot ou réinitialisez les filtres.</p>
+    </div>
+  </section>
+</main>
+
+<footer class="site-footer">
+  <p>Contenu ouvert à la révision — les scores d'importance restent provisoires.</p>
+  <a href="a-propos/">Méthode et sources</a>
+</footer>"""
+    return page_shell(
+        title="Bien penser — Les biais cognitifs",
+        description="Un catalogue visuel et documenté des biais cognitifs : cartes synthétiques, preuves, limites et prévention.",
+        relative_root="",
+        body=body,
+        page_class="home-page",
+    )
+
+
+def render_detail(bias: Bias, previous: Bias | None, following: Bias | None) -> str:
+    aliases = ""
+    if bias.aliases_fr:
+        aliases = f'<p class="aliases"><span>Aussi appelé</span> {html.escape(", ".join(bias.aliases_fr))}</p>'
+    prevention = "\n".join(f"<li>{inline_markdown(item)}</li>" for item in bias.prevention)
+    sources = "\n".join(
+        f'<li><a href="{html.escape(url, quote=True)}" rel="noreferrer">{html.escape(label)}</a></li>'
+        for label, url in bias.sources
+    )
+    previous_link = (
+        f'<a href="../{html.escape(previous.slug)}/"><span>← Fiche précédente</span><strong>{html.escape(previous.name_fr)}</strong></a>'
+        if previous else "<span></span>"
+    )
+    next_link = (
+        f'<a class="next" href="../{html.escape(following.slug)}/"><span>Fiche suivante →</span><strong>{html.escape(following.name_fr)}</strong></a>'
+        if following else "<span></span>"
+    )
+    body = f"""<header class="site-header detail-header">
+  <div class="header-inner">
+    <a class="wordmark" href="../../" aria-label="Bien penser, retour au catalogue">
+      <span class="wordmark-mark" aria-hidden="true">P</span>
+      <span><strong>Bien penser</strong><small>Les biais cognitifs</small></span>
+    </a>
+    <a class="back-link" href="../../">← Toutes les cartes</a>
+  </div>
+</header>
+
+<main id="contenu" class="detail-main">
+  <article>
+    <header class="bias-hero">
+      <div class="detail-badges">{family_badge(bias.family)} {evidence_badge(bias.evidence)}</div>
+      <p class="detail-number">Fiche nº {bias.number}</p>
+      <h1>{html.escape(bias.name_fr)}</h1>
+      <p class="detail-english" lang="en">{html.escape(bias.name_en)}</p>
+      {aliases}
+      <p class="detail-lead">{inline_markdown(bias.short)}</p>
+      <div class="detail-importance">
+        <span>Importance provisoire</span>
+        {importance_marks(bias.importance)}
+      </div>
+    </header>
+
+    <div class="article-layout">
+      <aside class="example-panel">
+        <span class="section-index">Exemple</span>
+        <p>{inline_markdown(bias.example)}</p>
+      </aside>
+      <div class="article-content">
+        <section>
+          <p class="section-kicker">Comprendre</p>
+          <h2>Description détaillée</h2>
+          {render_paragraphs(bias.detail)}
+        </section>
+        <section>
+          <p class="section-kicker">Enjeu</p>
+          <h2>Pourquoi c'est important</h2>
+          {render_paragraphs(bias.why)}
+        </section>
+        <section class="limits-section">
+          <p class="section-kicker">Esprit critique</p>
+          <h2>Limites et nuances</h2>
+          {render_paragraphs(bias.limits)}
+        </section>
+        <section>
+          <p class="section-kicker">Agir</p>
+          <h2>Deux réflexes utiles</h2>
+          <ol class="prevention-list">{prevention}</ol>
+        </section>
+        <section class="sources-section">
+          <p class="section-kicker">Approfondir</p>
+          <h2>Sources de départ</h2>
+          <ul>{sources}</ul>
+          <p class="source-note">Cette première fiche reste évolutive. Le niveau de preuve et l'importance seront affinés à mesure de la revue bibliographique.</p>
+        </section>
+      </div>
+    </div>
+  </article>
+
+  <nav class="bias-navigation" aria-label="Navigation entre les fiches">
+    {previous_link}
+    {next_link}
+  </nav>
+</main>
+
+<footer class="site-footer detail-footer">
+  <p>« Travaillons donc à bien penser. » — Blaise Pascal</p>
+  <a href="../../a-propos/">Méthode et sources</a>
+</footer>"""
+    return page_shell(
+        title=f"{bias.name_fr} — Bien penser",
+        description=bias.short,
+        relative_root="../../",
+        body=body,
+        page_class="detail-page",
+    )
+
+
+def render_about(biases: list[Bias]) -> str:
+    evidence_counts = Counter(bias.evidence for bias in biases)
+    body = f"""<header class="site-header detail-header">
+  <div class="header-inner">
+    <a class="wordmark" href="../" aria-label="Bien penser, retour au catalogue">
+      <span class="wordmark-mark" aria-hidden="true">P</span>
+      <span><strong>Bien penser</strong><small>Les biais cognitifs</small></span>
+    </a>
+    <a class="back-link" href="../">← Toutes les cartes</a>
+  </div>
+</header>
+<main id="contenu" class="about-main">
+  <header class="about-hero">
+    <p class="eyebrow">Méthode et sources</p>
+    <h1>Un catalogue qui distingue les noms, les preuves et l'importance.</h1>
+    <p>Les biais cognitifs ne forment pas une liste scientifique parfaitement délimitée. Ce site conserve les désaccords, les chevauchements et les limites au lieu de les masquer.</p>
+  </header>
+  <div class="about-grid">
+    <section>
+      <span class="about-number">01</span>
+      <h2>Deux niveaux de lecture</h2>
+      <p>Chaque carte donne le nom, une explication, un exemple et l'importance provisoire. La fiche détaillée ajoute les mécanismes, les nuances, la prévention et les sources.</p>
+    </section>
+    <section>
+      <span class="about-number">02</span>
+      <h2>Importance ≠ preuve</h2>
+      <p>L'importance pratique mesure la portée potentielle du biais. La solidité scientifique indique la qualité et la convergence des recherches disponibles. Les deux dimensions restent séparées.</p>
+    </section>
+    <section>
+      <span class="about-number">03</span>
+      <h2>Un contenu évolutif</h2>
+      <p>Cette première version publie {len(biases)} fiches : {evidence_counts['forte']} à preuves fortes, {evidence_counts['moderee']} modérées, {evidence_counts['limitee']} limitée et {evidence_counts['contestee']} contestées.</p>
+    </section>
+  </div>
+  <section class="pascal-panel">
+    <blockquote>« Travaillons donc à bien penser : voilà le principe de la morale. »</blockquote>
+    <p>Blaise Pascal, <cite>Pensées</cite>, fragment Transition 6 — Lafuma 200, Sellier 232, Brunschvicg 347.</p>
+    <a href="https://www.penseesdepascal.fr/Transition/P-R-Transition6.php">Consulter le texte et la concordance des éditions</a>
+  </section>
+  <section class="method-section">
+    <p class="section-kicker">Corpus</p>
+    <h2>Sources structurantes</h2>
+    <ul>
+      <li><a href="https://doi.org/10.1016/j.ipm.2024.103672">Soprano et al. (2024)</a> — inventaire de 221 candidats et sélection de 39 biais liés au fact-checking.</li>
+      <li><a href="https://doi.org/10.1109/TVCG.2018.2872577">Dimara et al. (2020)</a> — taxonomie de 154 biais en sept catégories de tâches.</li>
+      <li><a href="https://foundation.wikimedia.org/wiki/File:Cognitive_bias_codex_en.svg">Cognitive Bias Codex</a> — représentation visuelle historique de 188 entrées, utilisée pour la découverte et non comme preuve scientifique.</li>
+    </ul>
+    <p>Chaque fiche renvoie en outre vers une publication scientifique propre au phénomène. Les scores sont provisoires et seront révisés à partir de la fréquence, de la gravité, de la diversité des domaines et de l'actionnabilité.</p>
+  </section>
+</main>
+<footer class="site-footer detail-footer"><p>Bien penser — catalogue critique des biais cognitifs</p><a href="../">Explorer les cartes</a></footer>"""
+    return page_shell(
+        title="Méthode et sources — Bien penser",
+        description="Méthode, niveaux de preuve et sources du catalogue Bien penser.",
+        relative_root="../",
+        body=body,
+        page_class="about-page",
+    )
+
+
+def build(output: Path) -> list[Bias]:
+    biases = [bias for path in sorted(CONTENT_DIR.glob("*.md")) if (bias := read_bias(path))]
+    if not biases:
+        raise ValueError("No documented biases found")
+    biases.sort(key=lambda bias: (-bias.importance, EVIDENCE_ORDER.get(bias.evidence, 99), bias.name_fr.casefold()))
+
+    forbidden_outputs = {
+        Path("/").resolve(),
+        Path.home().resolve(),
+        PROJECT_ROOT.resolve(),
+        CONTENT_DIR.resolve(),
+        WEB_DIR.resolve(),
+        (PROJECT_ROOT / "catalogue").resolve(),
+    }
+    if output.resolve() in forbidden_outputs:
+        raise ValueError(f"Unsafe output directory: {output}")
+    if output.exists():
+        if not (output / BUILD_MARKER).is_file():
+            raise ValueError(
+                f"Refusing to replace an unmarked directory: {output}. "
+                f"Expected {BUILD_MARKER}."
+            )
+        shutil.rmtree(output)
+    output.mkdir(parents=True)
+    (output / BUILD_MARKER).write_text("Generated by scripts/build_site.py\n", encoding="utf-8")
+    shutil.copytree(WEB_DIR / "assets", output / "assets")
+    (output / ".nojekyll").write_text("", encoding="utf-8")
+    (output / "index.html").write_text(render_home(biases), encoding="utf-8")
+
+    about_dir = output / "a-propos"
+    about_dir.mkdir()
+    (about_dir / "index.html").write_text(render_about(biases), encoding="utf-8")
+
+    bias_root = output / "biais"
+    for index, bias in enumerate(biases):
+        destination = bias_root / bias.slug
+        destination.mkdir(parents=True)
+        previous = biases[index - 1] if index else None
+        following = biases[index + 1] if index + 1 < len(biases) else None
+        (destination / "index.html").write_text(
+            render_detail(bias, previous, following), encoding="utf-8"
+        )
+
+    (output / "404.html").write_text(
+        page_shell(
+            title="Page introuvable — Bien penser",
+            description="Cette page n'existe pas.",
+            relative_root="",
+            page_class="error-page",
+            body='<main id="contenu" class="error-main"><p class="eyebrow">Erreur 404</p><h1>Cette page s’est égarée.</h1><p>Le catalogue, lui, est toujours là.</p><a class="primary-link" href="./">Retour aux cartes</a></main>',
+        ),
+        encoding="utf-8",
+    )
+    return biases
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output", type=Path, default=PROJECT_ROOT / "_site")
+    args = parser.parse_args()
+    output = args.output.resolve()
+    biases = build(output)
+    print(f"Built {len(biases)} bias pages in {output}")
+
+
+if __name__ == "__main__":
+    main()
