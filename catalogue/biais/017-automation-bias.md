@@ -16,7 +16,7 @@ parent_id: null
 importance: 5
 importance_status: "provisoire"
 evidence_level: "forte"
-review_status: "non_revue"
+review_status: "en_revue"
 reviewed_on: null
 documented_on: "2026-08-10"
 fact_checking_relevant: true
