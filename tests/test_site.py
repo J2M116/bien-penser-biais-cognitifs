@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import sys
 import tempfile
 import unittest
@@ -55,7 +56,9 @@ class SiteBuildTests(unittest.TestCase):
     def test_home_contains_cards_and_controls(self) -> None:
         home = (self.output / "index.html").read_text(encoding="utf-8")
         self.assertEqual(home.count('data-bias-card'), 39)
-        self.assertEqual(home.count('data-bias-id="'), 39)
+        self.assertEqual(home.count('data-bias-card data-bias-id="'), 39)
+        self.assertEqual(home.count('data-example-slot'), 39)
+        self.assertEqual(home.count('data-example-text'), 39)
         self.assertIn('id="search"', home)
         self.assertIn('id="importance-filter"', home)
         self.assertIn('id="evidence-filter"', home)
@@ -147,7 +150,26 @@ class SiteBuildTests(unittest.TestCase):
         self.assertIn('data-rating-widget="', detail)
         self.assertIn("Votre évaluation", detail)
         self.assertIn('type="range" min="1" max="100"', detail)
+        self.assertIn('data-example-editor data-bias-id="', detail)
+        self.assertIn('textarea id="personal-example-', detail)
+        self.assertIn('minlength="10" maxlength="600"', detail)
+        self.assertIn('data-example-gallery data-bias-id="', detail)
+        self.assertIn('data-examples-list aria-busy="true"', detail)
+        self.assertIn('data-example-slot data-bias-id="', detail)
         self.assertIn('type="module" src="../../assets/community.js"', detail)
+
+    def test_every_detail_contains_the_personal_editor_and_public_gallery(self) -> None:
+        pages = list((self.output / "biais").glob("*/index.html"))
+        self.assertEqual(len(pages), 39)
+        for page in pages:
+            detail = page.read_text(encoding="utf-8")
+            self.assertEqual(detail.count("data-example-editor"), 1, page)
+            self.assertEqual(detail.count("data-example-gallery"), 1, page)
+            self.assertEqual(detail.count("data-example-slot"), 1, page)
+            self.assertIn("Cet exemple sera visible publiquement", detail, page)
+            self.assertIn("data-example-signed-out", detail, page)
+            self.assertIn("data-example-delete hidden", detail, page)
+            self.assertIn('data-examples-status role="status" aria-live="polite"', detail, page)
 
     def test_leaderboard_contains_all_documented_biases(self) -> None:
         leaderboard = (self.output / "classement" / "index.html").read_text(encoding="utf-8")
@@ -186,6 +208,92 @@ class SiteBuildTests(unittest.TestCase):
         self.assertIn('.eq("user_id", state.user.id)', community)
         self.assertIn("state.canReview = false", community)
         self.assertNotRegex(schema + community, r"[\w.+-]+@gmail\.com")
+
+    def test_community_examples_schema_protects_owners_and_votes(self) -> None:
+        schema = (PROJECT_ROOT / "supabase" / "migrations" / "20260813203521_community_examples.sql").read_text(
+            encoding="utf-8"
+        )
+        normalized = schema.lower()
+        self.assertIn("unique (user_id, bias_id)", normalized)
+        self.assertIn("primary key (user_id, example_id)", normalized)
+        self.assertIn("example_text = btrim(example_text)", normalized)
+        self.assertIn("char_length(example_text) between 10 and 600", normalized)
+        self.assertIn("references auth.users(id) on delete cascade", normalized)
+        self.assertIn("references public.bias_examples(id) on delete cascade", normalized)
+        for table in ("bias_examples", "bias_example_hearts", "bias_example_summaries"):
+            self.assertIn(f"alter table public.{table} enable row level security", normalized)
+        self.assertIn('create policy "bias_examples_update_own"', normalized)
+        self.assertIn("with check ((select auth.uid()) = user_id)", normalized)
+        self.assertIn('create policy "bias_example_summaries_public_read"', normalized)
+        self.assertIn("grant select\n  on table public.bias_example_summaries to anon, authenticated", normalized)
+        self.assertNotIn("grant insert\n  on table public.bias_example_summaries", normalized)
+        self.assertIn("grant insert (user_id, bias_id, example_text)", normalized)
+        self.assertIn("grant update (example_text)", normalized)
+        self.assertIn("grant insert (user_id, example_id)", normalized)
+        self.assertIn("revoke all on function private.sync_bias_example_summary()", normalized)
+        self.assertIn("revoke all on function private.sync_bias_example_heart_count()", normalized)
+        self.assertIn("set search_path = pg_catalog, public", normalized)
+
+        summary_block = normalized.split("create table public.bias_example_summaries", 1)[1].split(");", 1)[0]
+        self.assertNotIn("user_id", summary_block)
+        self.assertNotIn("email", summary_block)
+
+        catalog_block = normalized.split("insert into private.bias_catalog", 1)[1].split(
+            "create table public.bias_examples", 1
+        )[0]
+        registered = set(re.findall(r"\('([0-9]{3}-[a-z0-9-]+)'\)", catalog_block))
+        self.assertEqual(registered, {bias.slug for bias in self.biases})
+
+    def test_personal_examples_and_hearts_use_safe_client_contracts(self) -> None:
+        app = (PROJECT_ROOT / "web" / "assets" / "app.js").read_text(encoding="utf-8")
+        community = (PROJECT_ROOT / "web" / "assets" / "community.js").read_text(encoding="utf-8")
+        self.assertIn('.from("bias_examples")', community)
+        self.assertIn('.from("bias_example_summaries")', community)
+        self.assertIn('.from("bias_example_hearts")', community)
+        self.assertIn('.eq("user_id", state.user.id)', community)
+        self.assertIn('.eq("bias_id", biasId)', community)
+        self.assertIn('.eq("example_id", exampleId)', community)
+        self.assertIn("text.textContent = personal.example_text", community)
+        self.assertIn("text.textContent = example.example_text", community)
+        self.assertIn("text.replaceChildren", community)
+        self.assertIn("exampleText.length < 10", community)
+        self.assertIn("au moins 10 caractères hors espaces", community)
+        self.assertIn("L’exemple éditorial est de nouveau affiché", community)
+        self.assertIn("isCurrentSyncContext", community)
+        self.assertIn("syncEpoch += 1", community)
+        self.assertIn("personalHeartsError", community)
+        self.assertIn("?.focus()", community)
+        self.assertIn("submitButton.disabled = false", community)
+        self.assertNotIn("innerHTML", community)
+        self.assertNotIn("insertAdjacentHTML", community)
+        self.assertIn('heart.setAttribute("aria-pressed", String(liked))', community)
+        self.assertIn("bienpenser:personal-examples-changed", community)
+        self.assertIn("bienpenser:personal-examples-changed", app)
+
+    def test_publication_workflows_run_tests_before_building(self) -> None:
+        for workflow_path in (
+            PROJECT_ROOT / ".github" / "workflows" / "pages.yml",
+            PROJECT_ROOT / ".github" / "workflows" / "review-state.yml",
+        ):
+            workflow = workflow_path.read_text(encoding="utf-8")
+            tests_position = workflow.rfind("python -m unittest discover -s tests -v")
+            build_position = workflow.rfind("python scripts/build_site.py --output _site")
+            self.assertGreaterEqual(tests_position, 0, workflow_path)
+            self.assertGreater(build_position, tests_position, workflow_path)
+            self.assertIn("node --check web/assets/app.js", workflow)
+            self.assertIn("node --check web/assets/community.js", workflow)
+
+        review_workflow = (PROJECT_ROOT / ".github" / "workflows" / "review-state.yml").read_text(
+            encoding="utf-8"
+        )
+        apply_position = review_workflow.find('python scripts/apply_review_request.py "$REVIEW_REQUEST_TITLE"')
+        precommit_tests_position = review_workflow.find(
+            "python -m unittest discover -s tests -v",
+            apply_position,
+        )
+        commit_position = review_workflow.find("git commit -m", precommit_tests_position)
+        self.assertGreater(precommit_tests_position, apply_position)
+        self.assertGreater(commit_position, precommit_tests_position)
 
     def test_personal_rating_filters_share_a_single_visibility_controller(self) -> None:
         app = (PROJECT_ROOT / "web" / "assets" / "app.js").read_text(encoding="utf-8")

@@ -345,6 +345,59 @@ def rating_widget(bias: Bias) -> str:
 </section>"""
 
 
+def personal_example_editor(bias: Bias) -> str:
+    slug = html.escape(bias.slug)
+    return f"""<section class="personal-example-panel" data-example-editor data-bias-id="{slug}"
+  aria-labelledby="personal-example-title">
+  <div class="personal-example-copy">
+    <p class="section-kicker">Votre situation</p>
+    <h2 id="personal-example-title">Quel exemple vous parle vraiment&nbsp;?</h2>
+    <p>Ajoutez une situation concrète pour retrouver ce biais plus facilement. Après connexion, elle remplacera l'exemple éditorial dans votre catalogue.</p>
+  </div>
+  <div class="personal-example-editor">
+    <div data-example-signed-out>
+      <p><strong>Connectez-vous pour ajouter votre exemple.</strong></p>
+      <button class="example-login" type="button" data-auth-open>Se connecter ou créer un compte</button>
+    </div>
+    <p class="example-loading" data-example-loading hidden>Chargement de votre exemple…</p>
+    <form data-example-form hidden>
+      <label for="personal-example-{slug}">Votre exemple personnel</label>
+      <textarea id="personal-example-{slug}" name="example_text" minlength="10" maxlength="600"
+        rows="5" required aria-describedby="example-public-note-{slug} example-counter-{slug}"></textarea>
+      <div class="example-form-meta">
+        <p id="example-public-note-{slug}">Cet exemple sera visible publiquement et pourra recevoir des cœurs. Votre adresse e-mail ne sera jamais affichée.</p>
+        <span id="example-counter-{slug}" data-example-counter>0/600</span>
+      </div>
+      <div class="example-actions">
+        <button class="example-save" type="submit" data-example-save>Ajouter mon exemple</button>
+        <button class="example-delete" type="button" data-example-delete hidden>Supprimer</button>
+      </div>
+      <p class="example-message" data-example-message role="status" aria-live="polite"></p>
+    </form>
+  </div>
+</section>"""
+
+
+def community_examples_gallery(bias: Bias) -> str:
+    slug = html.escape(bias.slug)
+    return f"""<section class="community-examples" data-example-gallery data-bias-id="{slug}"
+  aria-labelledby="community-examples-title">
+  <div class="community-examples-heading">
+    <div>
+      <p class="section-kicker">Situations vécues</p>
+      <h2 id="community-examples-title">Les exemples de la communauté</h2>
+    </div>
+    <p><strong data-examples-total>0</strong> <span data-examples-total-label>exemple partagé</span></p>
+  </div>
+  <div class="examples-feedback">
+    <p data-examples-status role="status" aria-live="polite">Chargement des exemples partagés…</p>
+    <button type="button" data-examples-retry hidden>Réessayer</button>
+  </div>
+  <div class="community-examples-list" data-examples-list aria-busy="true"></div>
+  <button class="examples-more" type="button" data-examples-more hidden>Afficher davantage d'exemples</button>
+</section>"""
+
+
 def review_request_url(bias: Bias, action: str) -> str:
     action_labels = {
         "demarrer": "passer la fiche en revue",
@@ -387,7 +440,14 @@ def page_shell(*, title: str, description: str, relative_root: str, body: str, p
 
 def render_card(bias: Bias) -> str:
     search_text = " ".join(
-        [bias.name_fr, bias.name_en, *bias.aliases_fr, FAMILY_LABELS.get(bias.family, bias.family), bias.short]
+        [
+            bias.name_fr,
+            bias.name_en,
+            *bias.aliases_fr,
+            FAMILY_LABELS.get(bias.family, bias.family),
+            bias.short,
+            bias.example,
+        ]
     ).casefold()
     public_url = f"biais/{bias.slug}/"
     public_aria_label = f"Ouvrir la fiche {bias.name_fr}"
@@ -417,7 +477,9 @@ def render_card(bias: Bias) -> str:
     <h2>{html.escape(bias.name_fr)}</h2>
     <p class="english-name" lang="en">{html.escape(bias.name_en)}</p>
     <p class="card-summary">{inline_markdown(bias.short)}</p>
-    <div class="card-example"><span>Exemple</span><p>{inline_markdown(bias.example)}</p></div>
+    <div class="card-example" data-example-slot data-bias-id="{html.escape(bias.slug)}">
+      <span data-example-label>Exemple</span><p data-example-text>{inline_markdown(bias.example)}</p>
+    </div>
     <div class="card-footer">
       {importance_marks(bias.importance)}
       {evidence_badge(bias.evidence)}
@@ -646,10 +708,14 @@ def render_detail(bias: Bias, previous: Bias | None, following: Bias | None) -> 
 
     {rating_widget(bias)}
 
+    {personal_example_editor(bias)}
+
+    {community_examples_gallery(bias)}
+
     <div class="article-layout">
-      <aside class="example-panel">
-        <span class="section-index">Exemple</span>
-        <p>{inline_markdown(bias.example)}</p>
+      <aside class="example-panel" data-example-slot data-bias-id="{html.escape(bias.slug)}">
+        <span class="section-index" data-example-label>Exemple</span>
+        <p data-example-text>{inline_markdown(bias.example)}</p>
       </aside>
       <div class="article-content">
         <section>

@@ -44,13 +44,15 @@ Le script [`scripts/build_site.py`](scripts/build_site.py) transforme les fiches
 - des comptes par e-mail et mot de passe avec pseudonyme public ;
 - une évaluation personnelle de l'importance de chaque biais, de 1 à 100 ;
 - des filtres personnels pour retrouver les fiches déjà notées ou restant à noter ;
+- un exemple personnel par biais, qui remplace l'exemple éditorial pour son auteur après connexion ;
+- une galerie publique des exemples partagés, avec un cœur au maximum par compte et par exemple ;
 - un classement communautaire présentant moyenne, médiane et nombre d'évaluations ;
 - une page présentant la méthode et les sources ;
 - une mise en page adaptée aux ordinateurs et téléphones.
 
 Il utilise uniquement la bibliothèque standard de Python : aucun service d'IA, token ou dépendance payante n'intervient dans la génération.
 
-Les comptes et évaluations sont conservés dans Supabase. La page publique ne contient qu'une clé publiable à droits limités ; les politiques de sécurité de la base garantissent qu'une personne ne peut lire ou modifier que ses propres notes. Les agrégats du classement ne révèlent aucun identifiant individuel. Le droit éditorial est conservé séparément : un compte peut uniquement vérifier son propre droit, sans pouvoir se l'accorder. GitHub vérifie indépendamment l'identifiant immuable du propriétaire avant toute modification automatisée du catalogue.
+Les comptes, évaluations, exemples personnels et cœurs sont conservés dans Supabase. La page publique ne contient qu'une clé publiable à droits limités ; les politiques de sécurité de la base garantissent qu'une personne ne peut modifier que ses propres notes, exemples et cœurs. La galerie publique est alimentée par une projection séparée qui contient uniquement le texte, les dates et le total des cœurs : elle n'expose ni e-mail, ni identifiant d'auteur, ni vote individuel. Le droit éditorial est conservé séparément : un compte peut uniquement vérifier son propre droit, sans pouvoir se l'accorder. GitHub vérifie indépendamment l'identifiant immuable du propriétaire avant toute modification automatisée du catalogue.
 
 Dans **Supabase → Authentication → URL Configuration**, l'adresse du site et l'adresse de redirection autorisée doivent toutes deux être exactement `https://j2m116.github.io/bien-penser-biais-cognitifs/`. L'inscription transmet également cette adresse explicitement à Supabase afin que le lien de confirmation conserve le sous-chemin GitHub Pages.
 

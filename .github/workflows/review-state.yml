@@ -34,6 +34,12 @@ jobs:
           REVIEW_REQUEST_TITLE: ${{ github.event.issue.title }}
         run: python scripts/apply_review_request.py "$REVIEW_REQUEST_TITLE"
 
+      - name: Vérifier le catalogue modifié
+        run: |
+          python -m unittest discover -s tests -v
+          node --check web/assets/app.js
+          node --check web/assets/community.js
+
       - name: Enregistrer le nouvel état
         env:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
@@ -65,6 +71,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Vérifier le catalogue
+        run: |
+          python -m unittest discover -s tests -v
+          node --check web/assets/app.js
+          node --check web/assets/community.js
 
       - name: Générer le site statique
         run: python scripts/build_site.py --output _site

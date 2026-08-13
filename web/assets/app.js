@@ -123,6 +123,8 @@
     apply();
   });
 
+  document.addEventListener("bienpenser:personal-examples-changed", apply);
+
   reset.addEventListener("click", () => {
     search.value = "";
     importance.value = "0";

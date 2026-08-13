@@ -11,11 +11,41 @@ const state = {
   aggregates: new Map(),
   personal: new Map(),
   personalReady: false,
+  personalExamples: new Map(),
+  personalExamplesReady: false,
+  personalExamplesError: false,
+  communityExamples: new Map(),
+  communityExamplesReady: false,
+  communityExamplesError: false,
+  personalHeartIds: new Set(),
+  personalHeartsReady: false,
+  personalHeartsError: false,
   canReview: false,
 };
 
 const authDialog = document.querySelector("#auth-dialog");
 const authMessage = document.querySelector("[data-auth-message]");
+const exampleSlotDefaults = new WeakMap();
+const cardSearchDefaults = new WeakMap();
+let syncEpoch = 0;
+
+const currentUserId = () => state.user?.id || null;
+const captureSyncContext = () => ({ epoch: syncEpoch, userId: currentUserId() });
+const isCurrentSyncContext = (context) => (
+  context.epoch === syncEpoch && context.userId === currentUserId()
+);
+
+document.querySelectorAll("[data-example-slot]").forEach((slot) => {
+  const label = slot.querySelector("[data-example-label]");
+  const text = slot.querySelector("[data-example-text]");
+  if (!label || !text) return;
+  exampleSlotDefaults.set(slot, {
+    label: label.textContent,
+    nodes: Array.from(text.childNodes).map((node) => node.cloneNode(true)),
+  });
+  const card = slot.closest("[data-bias-card]");
+  if (card && !cardSearchDefaults.has(card)) cardSearchDefaults.set(card, card.dataset.search);
+});
 
 const setMessage = (element, message, kind = "") => {
   if (!element) return;
@@ -27,6 +57,14 @@ const formatCount = (count) => {
   if (!count) return "Aucune évaluation";
   return `${count} évaluation${count > 1 ? "s" : ""}`;
 };
+
+const formatHearts = (count) => `${count} cœur${count > 1 ? "s" : ""}`;
+
+const formatExampleDate = (value) => new Intl.DateTimeFormat("fr-FR", {
+  day: "numeric",
+  month: "long",
+  year: "numeric",
+}).format(new Date(value));
 
 const openAuthDialog = () => {
   if (!authDialog) return;
@@ -111,36 +149,128 @@ document.querySelector("[data-sign-out]")?.addEventListener("click", async () =>
   authDialog?.close();
 });
 
-const loadProfile = async () => {
+const loadProfile = async (context = captureSyncContext()) => {
   state.profile = null;
-  if (!state.user) return;
+  if (!context.userId) return;
   const { data } = await supabase
     .from("profiles")
     .select("display_name")
-    .eq("user_id", state.user.id)
+    .eq("user_id", context.userId)
     .maybeSingle();
+  if (!isCurrentSyncContext(context)) return;
   state.profile = data;
 };
 
-const loadPersonalRatings = async () => {
+const loadPersonalRatings = async (context = captureSyncContext()) => {
   state.personal.clear();
   state.personalReady = false;
-  if (!state.user) return;
-  const { data, error } = await supabase.from("ratings").select("bias_id, score");
+  if (!context.userId) return;
+  const { data, error } = await supabase
+    .from("ratings")
+    .select("bias_id, score")
+    .eq("user_id", context.userId);
+  if (!isCurrentSyncContext(context)) return;
   if (error) return;
   data.forEach((rating) => state.personal.set(rating.bias_id, Number(rating.score)));
   state.personalReady = true;
 };
 
-const loadReviewerAccess = async () => {
+const visibleBiasIds = () => Array.from(new Set(
+  Array.from(document.querySelectorAll("[data-example-slot][data-bias-id]"))
+    .map((slot) => slot.dataset.biasId),
+));
+
+const loadPersonalExamples = async (context = captureSyncContext()) => {
+  state.personalExamples.clear();
+  state.personalExamplesReady = false;
+  state.personalExamplesError = false;
+  if (!context.userId) return;
+  const biasIds = visibleBiasIds();
+  if (!biasIds.length) {
+    state.personalExamplesReady = true;
+    return;
+  }
+  const { data, error } = await supabase
+    .from("bias_examples")
+    .select("id, bias_id, example_text")
+    .eq("user_id", context.userId)
+    .in("bias_id", biasIds);
+  if (!isCurrentSyncContext(context)) return;
+  if (error) {
+    state.personalExamplesError = true;
+    return;
+  }
+  data.forEach((example) => state.personalExamples.set(example.bias_id, example));
+  state.personalExamplesReady = true;
+};
+
+const loadCommunityExamples = async (context = captureSyncContext()) => {
+  state.communityExamples.clear();
+  state.communityExamplesReady = false;
+  state.communityExamplesError = false;
+  const galleries = Array.from(document.querySelectorAll("[data-example-gallery][data-bias-id]"));
+  if (!galleries.length) {
+    state.communityExamplesReady = true;
+    return;
+  }
+  const biasIds = galleries.map((gallery) => gallery.dataset.biasId);
+  const { data, error } = await supabase
+    .from("bias_example_summaries")
+    .select("example_id, bias_id, example_text, heart_count, created_at, updated_at")
+    .in("bias_id", biasIds)
+    .order("heart_count", { ascending: false })
+    .order("created_at", { ascending: true });
+  if (!isCurrentSyncContext(context)) return;
+  if (error) {
+    state.communityExamplesError = true;
+    return;
+  }
+  biasIds.forEach((biasId) => state.communityExamples.set(biasId, []));
+  data.forEach((example) => {
+    state.communityExamples.get(example.bias_id)?.push({
+      ...example,
+      heart_count: Number(example.heart_count),
+    });
+  });
+  state.communityExamplesReady = true;
+};
+
+const loadPersonalHearts = async (context = captureSyncContext()) => {
+  state.personalHeartIds.clear();
+  state.personalHeartsReady = false;
+  state.personalHeartsError = false;
+  if (!context.userId) return;
+  const exampleIds = Array.from(state.communityExamples.values())
+    .flat()
+    .map((example) => example.example_id);
+  if (!exampleIds.length) {
+    state.personalHeartsReady = true;
+    return;
+  }
+  const { data, error } = await supabase
+    .from("bias_example_hearts")
+    .select("example_id")
+    .eq("user_id", context.userId)
+    .in("example_id", exampleIds);
+  if (!isCurrentSyncContext(context)) return;
+  if (error) {
+    state.personalHeartsError = true;
+    return;
+  }
+  data.forEach((heart) => state.personalHeartIds.add(heart.example_id));
+  state.personalHeartsReady = true;
+};
+
+const loadReviewerAccess = async (context = captureSyncContext()) => {
   state.canReview = false;
-  if (!state.user) return;
+  if (!context.userId) return;
   const { data, error } = await supabase
     .from("reviewer_access")
     .select("user_id")
-    .eq("user_id", state.user.id)
+    .eq("user_id", context.userId)
     .maybeSingle();
-  if (!error && data?.user_id === state.user.id) state.canReview = true;
+  if (!isCurrentSyncContext(context)) return;
+  if (!error && data?.user_id === context.userId) state.canReview = true;
 };
 
 const publishPersonalRatingState = () => {
@@ -204,10 +334,159 @@ const renderReviewerAccess = () => {
   });
 };
 
-const loadAggregates = async () => {
+const renderPersonalExamples = () => {
+  document.querySelectorAll("[data-example-slot][data-bias-id]").forEach((slot) => {
+    const defaults = exampleSlotDefaults.get(slot);
+    const label = slot.querySelector("[data-example-label]");
+    const text = slot.querySelector("[data-example-text]");
+    if (!defaults || !label || !text) return;
+    const personal = state.user && state.personalExamplesReady
+      ? state.personalExamples.get(slot.dataset.biasId)
+      : null;
+    if (personal) {
+      label.textContent = "Votre exemple";
+      text.textContent = personal.example_text;
+    } else {
+      label.textContent = defaults.label;
+      text.replaceChildren(...defaults.nodes.map((node) => node.cloneNode(true)));
+    }
+    const card = slot.closest("[data-bias-card]");
+    if (card) {
+      const standardSearch = cardSearchDefaults.get(card) || card.dataset.search;
+      card.dataset.search = personal
+        ? `${standardSearch} ${personal.example_text.toLocaleLowerCase("fr")}`
+        : standardSearch;
+    }
+  });
+  document.dispatchEvent(new CustomEvent("bienpenser:personal-examples-changed"));
+};
+
+const renderPersonalExampleEditors = () => {
+  const signedIn = Boolean(state.user);
+  document.querySelectorAll("[data-example-editor][data-bias-id]").forEach((editor) => {
+    const signedOut = editor.querySelector("[data-example-signed-out]");
+    const loading = editor.querySelector("[data-example-loading]");
+    const form = editor.querySelector("[data-example-form]");
+    const textarea = form?.querySelector("textarea[name='example_text']");
+    const counter = form?.querySelector("[data-example-counter]");
+    const saveButton = form?.querySelector("[data-example-save]");
+    const deleteButton = form?.querySelector("[data-example-delete]");
+    signedOut?.toggleAttribute("hidden", signedIn);
+    if (loading) {
+      loading.hidden = !signedIn || state.personalExamplesReady;
+      loading.textContent = state.personalExamplesError
+        ? "Votre exemple n’a pas pu être chargé. Réessayez après avoir rechargé la page."
+        : "Chargement de votre exemple…";
+    }
+    if (!form || !textarea || !counter || !saveButton || !deleteButton) return;
+    form.hidden = !signedIn || !state.personalExamplesReady;
+    if (form.hidden) return;
+    saveButton.disabled = false;
+    deleteButton.disabled = false;
+    const personal = state.personalExamples.get(editor.dataset.biasId);
+    textarea.value = personal?.example_text || "";
+    counter.textContent = `${textarea.value.length}/600`;
+    saveButton.textContent = personal ? "Enregistrer les modifications" : "Ajouter mon exemple";
+    deleteButton.hidden = !personal;
+  });
+};
+
+const renderCommunityExamples = () => {
+  document.querySelectorAll("[data-example-gallery][data-bias-id]").forEach((gallery) => {
+    const list = gallery.querySelector("[data-examples-list]");
+    const status = gallery.querySelector("[data-examples-status]");
+    const retry = gallery.querySelector("[data-examples-retry]");
+    const more = gallery.querySelector("[data-examples-more]");
+    const total = gallery.querySelector("[data-examples-total]");
+    const totalLabel = gallery.querySelector("[data-examples-total-label]");
+    if (!list || !status || !retry || !more || !total || !totalLabel) return;
+    list.replaceChildren();
+    list.setAttribute("aria-busy", String(!state.communityExamplesReady));
+    retry.hidden = !state.communityExamplesError
+      && !(Boolean(state.user) && state.personalHeartsError);
+    status.dataset.kind = state.communityExamplesError ? "error" : "";
+
+    if (!state.communityExamplesReady) {
+      status.textContent = state.communityExamplesError
+        ? "Les exemples partagés n’ont pas pu être chargés."
+        : "Chargement des exemples partagés…";
+      total.textContent = "0";
+      totalLabel.textContent = "exemple partagé";
+      more.hidden = true;
+      return;
+    }
+
+    const examples = state.communityExamples.get(gallery.dataset.biasId) || [];
+    total.textContent = String(examples.length);
+    totalLabel.textContent = examples.length > 1 ? "exemples partagés" : "exemple partagé";
+    status.textContent = examples.length
+      ? state.personalHeartsError
+        ? "Les compteurs sont visibles, mais le vote est temporairement indisponible."
+        : ""
+      : "Aucun exemple partagé pour l’instant. Soyez le premier à en ajouter un.";
+    status.dataset.kind = state.personalHeartsError ? "error" : "";
+
+    const visibleCount = Number.parseInt(gallery.dataset.visibleCount || "12", 10);
+    examples.slice(0, visibleCount).forEach((example) => {
+      const article = document.createElement("article");
+      article.className = "community-example-card";
+      article.dataset.exampleId = example.example_id;
+
+      const meta = document.createElement("div");
+      meta.className = "community-example-meta";
+      const shared = document.createElement("span");
+      shared.textContent = "Exemple partagé";
+      meta.appendChild(shared);
+      const personal = state.personalExamples.get(gallery.dataset.biasId);
+      if (state.user && personal?.id === example.example_id) {
+        const own = document.createElement("strong");
+        own.textContent = "Votre exemple";
+        meta.appendChild(own);
+        article.classList.add("is-personal");
+      }
+
+      const text = document.createElement("p");
+      text.className = "community-example-text";
+      text.textContent = example.example_text;
+
+      const footer = document.createElement("div");
+      footer.className = "community-example-footer";
+      const time = document.createElement("time");
+      time.dateTime = example.created_at;
+      time.textContent = formatExampleDate(example.created_at);
+
+      const liked = state.personalHeartIds.has(example.example_id);
+      const heart = document.createElement("button");
+      heart.className = `example-heart${liked ? " is-liked" : ""}`;
+      heart.type = "button";
+      heart.dataset.exampleHeart = example.example_id;
+      heart.setAttribute("aria-pressed", String(liked));
+      heart.setAttribute(
+        "aria-label",
+        `${liked ? "Retirer votre cœur" : "Attribuer un cœur"} — ${formatHearts(example.heart_count)}`,
+      );
+      heart.disabled = Boolean(state.user) && !state.personalHeartsReady;
+      const symbol = document.createElement("span");
+      symbol.setAttribute("aria-hidden", "true");
+      symbol.textContent = liked ? "♥" : "♡";
+      const count = document.createElement("span");
+      count.textContent = String(example.heart_count);
+      heart.append(symbol, count);
+      heart.addEventListener("click", () => toggleExampleHeart(example.example_id, gallery));
+
+      footer.append(time, heart);
+      article.append(meta, text, footer);
+      list.appendChild(article);
+    });
+    more.hidden = visibleCount >= examples.length;
+  });
+};
+
+const loadAggregates = async (context = captureSyncContext()) => {
   const { data, error } = await supabase
     .from("bias_score_summaries")
     .select("bias_id, average_score, median_score, ratings_count");
+  if (!isCurrentSyncContext(context)) return;
   if (error) return;
   state.aggregates.clear();
   data.forEach((row) => {
@@ -239,8 +518,10 @@ const renderRatingWidgets = () => {
     const input = form?.querySelector("input[type='range']");
     const output = form?.querySelector("[data-rating-output]");
     const deleteButton = form?.querySelector("[data-rating-delete]");
+    const submitButton = form?.querySelector("button[type='submit']");
     const personalScore = state.personal.get(biasId);
-    if (!input || !output || !deleteButton) return;
+    if (!input || !output || !deleteButton || !submitButton) return;
+    submitButton.disabled = false;
     input.value = personalScore || 50;
     output.textContent = input.value;
     deleteButton.hidden = !personalScore;
@@ -258,6 +539,7 @@ document.querySelectorAll("[data-rating-form]").forEach((form) => {
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!state.user) return openAuthDialog();
+    const context = captureSyncContext();
     const submit = form.querySelector("button[type='submit']");
     submit.disabled = true;
     setMessage(message, "Enregistrement…");
@@ -267,13 +549,15 @@ document.querySelectorAll("[data-rating-form]").forEach((form) => {
       score: Number(input.value),
     };
     const { error } = await supabase.from("ratings").upsert(rating, { onConflict: "user_id,bias_id" });
+    if (!isCurrentSyncContext(context)) return;
     if (error) {
       setMessage(message, error.message, "error");
     } else {
       state.personal.set(rating.bias_id, rating.score);
       publishPersonalRatingState();
       setMessage(message, "Votre note est enregistrée.", "success");
-      await loadAggregates();
+      await loadAggregates(context);
+      if (!isCurrentSyncContext(context)) return;
       renderCommunityScores();
       renderRatingWidgets();
       renderLeaderboard();
@@ -282,20 +566,182 @@ document.querySelectorAll("[data-rating-form]").forEach((form) => {
   });
   form.querySelector("[data-rating-delete]")?.addEventListener("click", async () => {
     if (!state.user) return;
+    const context = captureSyncContext();
     const biasId = widget.dataset.ratingWidget;
     const { error } = await supabase
       .from("ratings")
       .delete()
       .eq("user_id", state.user.id)
       .eq("bias_id", biasId);
+    if (!isCurrentSyncContext(context)) return;
     if (error) return setMessage(message, error.message, "error");
     state.personal.delete(biasId);
     publishPersonalRatingState();
     setMessage(message, "Votre note a été supprimée.", "success");
-    await loadAggregates();
+    await loadAggregates(context);
+    if (!isCurrentSyncContext(context)) return;
     renderCommunityScores();
     renderRatingWidgets();
     renderLeaderboard();
+  });
+});
+
+document.querySelectorAll("[data-example-form]").forEach((form) => {
+  const editor = form.closest("[data-example-editor]");
+  const textarea = form.querySelector("textarea[name='example_text']");
+  const counter = form.querySelector("[data-example-counter]");
+  const message = form.querySelector("[data-example-message]");
+  const saveButton = form.querySelector("[data-example-save]");
+  const deleteButton = form.querySelector("[data-example-delete]");
+  textarea.addEventListener("input", () => {
+    counter.textContent = `${textarea.value.length}/600`;
+  });
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!state.user) return openAuthDialog();
+    if (!state.personalExamplesReady) {
+      return setMessage(message, "Votre exemple doit d’abord être chargé.", "error");
+    }
+    const context = captureSyncContext();
+    const biasId = editor.dataset.biasId;
+    const exampleText = textarea.value.trim();
+    if (exampleText.length < 10) {
+      return setMessage(
+        message,
+        "Votre exemple doit contenir au moins 10 caractères hors espaces.",
+        "error",
+      );
+    }
+    saveButton.disabled = true;
+    deleteButton.disabled = true;
+    setMessage(message, "Enregistrement…");
+    const current = state.personalExamples.get(biasId);
+    const request = current
+      ? supabase
+        .from("bias_examples")
+        .update({ example_text: exampleText })
+        .eq("user_id", context.userId)
+        .eq("bias_id", biasId)
+      : supabase
+        .from("bias_examples")
+        .insert({ user_id: context.userId, bias_id: biasId, example_text: exampleText });
+    const { data, error } = await request
+      .select("id, bias_id, example_text")
+      .single();
+    if (!isCurrentSyncContext(context)) return;
+    if (error) {
+      setMessage(message, error.message, "error");
+    } else {
+      state.personalExamples.set(biasId, data);
+      renderPersonalExamples();
+      renderPersonalExampleEditors();
+      await loadCommunityExamples(context);
+      if (!isCurrentSyncContext(context)) return;
+      renderCommunityExamples();
+      setMessage(message, current ? "Votre exemple a été modifié." : "Votre exemple a été ajouté.", "success");
+    }
+    saveButton.disabled = false;
+    deleteButton.disabled = false;
+  });
+  deleteButton.addEventListener("click", async () => {
+    if (!state.user || !state.personalExamplesReady) return;
+    const context = captureSyncContext();
+    const biasId = editor.dataset.biasId;
+    const current = state.personalExamples.get(biasId);
+    if (!current || !window.confirm("Supprimer votre exemple public pour ce biais ?")) return;
+    saveButton.disabled = true;
+    deleteButton.disabled = true;
+    setMessage(message, "Suppression…");
+    const { error } = await supabase
+      .from("bias_examples")
+      .delete()
+      .eq("user_id", context.userId)
+      .eq("bias_id", biasId);
+    if (!isCurrentSyncContext(context)) return;
+    if (error) {
+      setMessage(message, error.message, "error");
+      saveButton.disabled = false;
+      deleteButton.disabled = false;
+      return;
+    }
+    state.personalExamples.delete(biasId);
+    state.personalHeartIds.delete(current.id);
+    renderPersonalExamples();
+    renderPersonalExampleEditors();
+    await loadCommunityExamples(context);
+    if (!isCurrentSyncContext(context)) return;
+    renderCommunityExamples();
+    saveButton.disabled = false;
+    deleteButton.disabled = false;
+    setMessage(message, "Votre exemple a été supprimé. L’exemple éditorial est de nouveau affiché.", "success");
+  });
+});
+
+const toggleExampleHeart = async (exampleId, gallery) => {
+  if (!state.user) return openAuthDialog();
+  const context = captureSyncContext();
+  const status = gallery.querySelector("[data-examples-status]");
+  if (!state.personalHeartsReady) {
+    return setMessage(status, "Le vote n’est pas disponible pour le moment.", "error");
+  }
+  const examples = state.communityExamples.get(gallery.dataset.biasId) || [];
+  const example = examples.find((candidate) => candidate.example_id === exampleId);
+  if (!example) return;
+  const button = gallery.querySelector(`[data-example-heart="${exampleId}"]`);
+  if (button) button.disabled = true;
+  const liked = state.personalHeartIds.has(exampleId);
+  const request = liked
+    ? supabase
+      .from("bias_example_hearts")
+      .delete()
+      .eq("user_id", context.userId)
+      .eq("example_id", exampleId)
+    : supabase
+      .from("bias_example_hearts")
+      .insert({ user_id: context.userId, example_id: exampleId });
+  const { error } = await request;
+  if (!isCurrentSyncContext(context)) return;
+  if (error) {
+    if (button) button.disabled = false;
+    return setMessage(status, error.message, "error");
+  }
+  if (liked) {
+    state.personalHeartIds.delete(exampleId);
+    example.heart_count = Math.max(0, example.heart_count - 1);
+  } else {
+    state.personalHeartIds.add(exampleId);
+    example.heart_count += 1;
+  }
+  renderCommunityExamples();
+  gallery.querySelector(`[data-example-heart="${exampleId}"]`)?.focus();
+  setMessage(
+    status,
+    liked ? "Votre cœur a été retiré." : "Votre cœur a été ajouté.",
+    "success",
+  );
+};
+
+document.querySelectorAll("[data-examples-more]").forEach((button) => {
+  button.addEventListener("click", () => {
+    const gallery = button.closest("[data-example-gallery]");
+    gallery.dataset.visibleCount = String(Number.parseInt(gallery.dataset.visibleCount || "12", 10) + 12);
+    renderCommunityExamples();
+  });
+});
+
+document.querySelectorAll("[data-examples-retry]").forEach((button) => {
+  button.addEventListener("click", async () => {
+    const context = captureSyncContext();
+    state.communityExamplesError = false;
+    state.communityExamplesReady = false;
+    state.personalHeartsError = false;
+    state.personalHeartsReady = false;
+    renderCommunityExamples();
+    await loadCommunityExamples(context);
+    if (!isCurrentSyncContext(context)) return;
+    await loadPersonalHearts(context);
+    if (!isCurrentSyncContext(context)) return;
+    renderCommunityExamples();
   });
 });
 
@@ -343,10 +789,45 @@ document.querySelectorAll("[data-leaderboard-search], [data-leaderboard-family],
 });
 
 const synchronize = async (user) => {
+  syncEpoch += 1;
   state.user = user;
-  await Promise.all([loadProfile(), loadPersonalRatings(), loadAggregates(), loadReviewerAccess()]);
+  const context = captureSyncContext();
+  state.profile = null;
+  state.personal.clear();
+  state.personalReady = false;
+  state.personalExamples.clear();
+  state.personalExamplesReady = false;
+  state.personalExamplesError = false;
+  state.personalHeartIds.clear();
+  state.personalHeartsReady = false;
+  state.personalHeartsError = false;
+  state.canReview = false;
+  document.querySelectorAll("[data-example-message]").forEach((message) => {
+    setMessage(message, "");
+  });
   renderAuth();
   renderReviewerAccess();
+  renderPersonalExamples();
+  renderPersonalExampleEditors();
+  renderCommunityExamples();
+  publishPersonalRatingState();
+
+  await Promise.all([
+    loadProfile(context),
+    loadPersonalRatings(context),
+    loadAggregates(context),
+    loadReviewerAccess(context),
+    loadPersonalExamples(context),
+    loadCommunityExamples(context),
+  ]);
+  if (!isCurrentSyncContext(context)) return;
+  await loadPersonalHearts(context);
+  if (!isCurrentSyncContext(context)) return;
+  renderAuth();
+  renderReviewerAccess();
+  renderPersonalExamples();
+  renderPersonalExampleEditors();
+  renderCommunityExamples();
   renderCommunityScores();
   renderRatingWidgets();
   renderLeaderboard();
