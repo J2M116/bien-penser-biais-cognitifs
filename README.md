@@ -39,17 +39,18 @@ Le script [`scripts/build_site.py`](scripts/build_site.py) transforme les fiches
 - une page d'accueil avec cartes, recherche, filtres et tri ;
 - une page détaillée par biais ;
 - un suivi individuel `non revue` / `en revue` / `revue`, avec date de dernière revue ;
-- un accès direct à l'éditeur GitHub pour faire évoluer chaque fichier Markdown ;
+- un accès éditorial privé, accordé en base, pour faire évoluer chaque fichier Markdown ;
 - des boutons d'état dans l'interface, confirmés par GitHub puis appliqués et publiés automatiquement ;
 - des comptes par e-mail et mot de passe avec pseudonyme public ;
 - une évaluation personnelle de l'importance de chaque biais, de 1 à 100 ;
+- des filtres personnels pour retrouver les fiches déjà notées ou restant à noter ;
 - un classement communautaire présentant moyenne, médiane et nombre d'évaluations ;
 - une page présentant la méthode et les sources ;
 - une mise en page adaptée aux ordinateurs et téléphones.
 
 Il utilise uniquement la bibliothèque standard de Python : aucun service d'IA, token ou dépendance payante n'intervient dans la génération.
 
-Les comptes et évaluations sont conservés dans Supabase. La page publique ne contient qu'une clé publiable à droits limités ; les politiques de sécurité de la base garantissent qu'une personne ne peut lire ou modifier que ses propres notes. Les agrégats du classement ne révèlent aucun identifiant individuel.
+Les comptes et évaluations sont conservés dans Supabase. La page publique ne contient qu'une clé publiable à droits limités ; les politiques de sécurité de la base garantissent qu'une personne ne peut lire ou modifier que ses propres notes. Les agrégats du classement ne révèlent aucun identifiant individuel. Le droit éditorial est conservé séparément : un compte peut uniquement vérifier son propre droit, sans pouvoir se l'accorder. GitHub vérifie indépendamment l'identifiant immuable du propriétaire avant toute modification automatisée du catalogue.
 
 Dans **Supabase → Authentication → URL Configuration**, l'adresse du site et l'adresse de redirection autorisée doivent toutes deux être exactement `https://j2m116.github.io/bien-penser-biais-cognitifs/`. L'inscription transmet également cette adresse explicitement à Supabase afin que le lien de confirmation conserve le sous-chemin GitHub Pages.
 

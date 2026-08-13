@@ -10,6 +10,8 @@ const state = {
   profile: null,
   aggregates: new Map(),
   personal: new Map(),
+  personalReady: false,
+  canReview: false,
 };
 
 const authDialog = document.querySelector("#auth-dialog");
@@ -122,10 +124,34 @@ const loadProfile = async () => {
 
 const loadPersonalRatings = async () => {
   state.personal.clear();
+  state.personalReady = false;
   if (!state.user) return;
   const { data, error } = await supabase.from("ratings").select("bias_id, score");
   if (error) return;
   data.forEach((rating) => state.personal.set(rating.bias_id, Number(rating.score)));
+  state.personalReady = true;
+};
+
+const loadReviewerAccess = async () => {
+  state.canReview = false;
+  if (!state.user) return;
+  const { data, error } = await supabase
+    .from("reviewer_access")
+    .select("user_id")
+    .eq("user_id", state.user.id)
+    .maybeSingle();
+  if (!error && data?.user_id === state.user.id) state.canReview = true;
+};
+
+const publishPersonalRatingState = () => {
+  const signedIn = Boolean(state.user);
+  const ready = signedIn && state.personalReady;
+  document.querySelectorAll("[data-bias-card][data-bias-id]").forEach((card) => {
+    card.dataset.userRated = ready ? String(state.personal.has(card.dataset.biasId)) : "unknown";
+  });
+  document.dispatchEvent(new CustomEvent("bienpenser:personal-ratings-changed", {
+    detail: { signedIn, ready },
+  }));
 };
 
 const renderAuth = () => {
@@ -145,6 +171,36 @@ const renderAuth = () => {
   });
   document.querySelectorAll("[data-rating-form]").forEach((form) => {
     form.hidden = !signedIn;
+  });
+};
+
+const renderReviewerAccess = () => {
+  document.querySelectorAll("[data-reviewer-only]").forEach((element) => {
+    element.hidden = !state.canReview;
+  });
+  document.querySelectorAll("[data-reviewer-locked]").forEach((element) => {
+    element.hidden = state.canReview;
+  });
+  document.querySelectorAll("[data-reviewer-badge]").forEach((element) => {
+    element.hidden = !state.canReview;
+  });
+  document.querySelectorAll("[data-reviewer-card]").forEach((card) => {
+    const link = card.querySelector("[data-card-primary-action]");
+    const label = card.querySelector("[data-card-action-label]");
+    if (!link || !label) return;
+    if (state.canReview && link.dataset.reviewerHref) {
+      link.setAttribute("href", link.dataset.reviewerHref);
+      link.setAttribute("aria-label", link.dataset.reviewerAriaLabel);
+      link.setAttribute("target", "_blank");
+      link.setAttribute("rel", "noreferrer");
+      label.textContent = "Revoir la fiche";
+    } else {
+      link.setAttribute("href", link.dataset.publicHref);
+      link.setAttribute("aria-label", link.dataset.publicAriaLabel);
+      link.removeAttribute("target");
+      link.removeAttribute("rel");
+      label.textContent = "Lire la fiche";
+    }
   });
 };
 
@@ -215,6 +271,7 @@ document.querySelectorAll("[data-rating-form]").forEach((form) => {
       setMessage(message, error.message, "error");
     } else {
       state.personal.set(rating.bias_id, rating.score);
+      publishPersonalRatingState();
       setMessage(message, "Votre note est enregistrée.", "success");
       await loadAggregates();
       renderCommunityScores();
@@ -233,6 +290,7 @@ document.querySelectorAll("[data-rating-form]").forEach((form) => {
       .eq("bias_id", biasId);
     if (error) return setMessage(message, error.message, "error");
     state.personal.delete(biasId);
+    publishPersonalRatingState();
     setMessage(message, "Votre note a été supprimée.", "success");
     await loadAggregates();
     renderCommunityScores();
@@ -286,11 +344,13 @@ document.querySelectorAll("[data-leaderboard-search], [data-leaderboard-family],
 
 const synchronize = async (user) => {
   state.user = user;
-  await Promise.all([loadProfile(), loadPersonalRatings(), loadAggregates()]);
+  await Promise.all([loadProfile(), loadPersonalRatings(), loadAggregates(), loadReviewerAccess()]);
   renderAuth();
+  renderReviewerAccess();
   renderCommunityScores();
   renderRatingWidgets();
   renderLeaderboard();
+  publishPersonalRatingState();
 };
 
 const { data: { session } } = await supabase.auth.getSession();

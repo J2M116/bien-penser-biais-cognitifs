@@ -13,7 +13,7 @@ concurrency:
 jobs:
   update:
     if: >-
-      github.actor == 'J2M116' &&
+      github.actor_id == '158738352' &&
       startsWith(github.event.issue.title, 'REVUE | ')
     runs-on: ubuntu-latest
     permissions:

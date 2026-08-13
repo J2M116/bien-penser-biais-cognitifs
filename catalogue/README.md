@@ -43,6 +43,8 @@ La partie située entre les deux marqueurs `---` est un en-tête YAML lisible pa
 
 ## Parcours de revue individuelle
 
+Ce parcours est proposé uniquement au responsable éditorial après connexion avec son compte autorisé.
+
 1. Ouvrir la fiche sur le site, puis cliquer sur **Passer en revue**.
 2. GitHub présente une demande préremplie. Après confirmation, l'automatisation passe la fiche à `en_revue` et republie le site.
 3. La carte affiche alors **En revue** et son bouton devient **Revoir la fiche**. La page détaillée propose aussi **Faire évoluer la fiche**, qui ouvre le Markdown dans l'éditeur GitHub.

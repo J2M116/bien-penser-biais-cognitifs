@@ -55,6 +55,7 @@ class SiteBuildTests(unittest.TestCase):
     def test_home_contains_cards_and_controls(self) -> None:
         home = (self.output / "index.html").read_text(encoding="utf-8")
         self.assertEqual(home.count('data-bias-card'), 39)
+        self.assertEqual(home.count('data-bias-id="'), 39)
         self.assertIn('id="search"', home)
         self.assertIn('id="importance-filter"', home)
         self.assertIn('id="evidence-filter"', home)
@@ -62,6 +63,10 @@ class SiteBuildTests(unittest.TestCase):
         self.assertIn('data-family-filter="all"', home)
         self.assertIn('href="classement/"', home)
         self.assertEqual(home.count('data-community-score="'), 39)
+        self.assertIn('data-personal-scope="all" aria-pressed="true"', home)
+        self.assertIn('data-personal-scope="mine" aria-pressed="false" disabled', home)
+        self.assertIn('data-personal-scope="unrated" aria-pressed="false" disabled', home)
+        self.assertIn('data-personal-filter-status aria-live="polite"', home)
         review_states = ("non_revue", "en_revue", "revue")
         self.assertEqual(sum(home.count(f'data-review="{state}"') for state in review_states), 39)
         self.assertEqual(sum(home.count(f'review-state--{state}">') for state in review_states), 39)
@@ -72,15 +77,19 @@ class SiteBuildTests(unittest.TestCase):
             self.assertRegex(content, r'(?m)^review_status: "(?:non_revue|en_revue|revue)"$', source)
             self.assertRegex(content, r'(?m)^reviewed_on: (?:null|"\d{4}-\d{2}-\d{2}")$', source)
 
-    def test_in_review_card_opens_the_github_editor(self) -> None:
+    def test_in_review_card_defaults_to_detail_until_reviewer_is_authorized(self) -> None:
         bias = replace(self.biases[0], review_status="en_revue")
         card = build_site.render_card(bias)
         detail = build_site.render_detail(bias, None, None)
-        self.assertIn("Revoir la fiche", card)
-        self.assertIn("github.com/J2M116/bien-penser-biais-cognitifs/edit/main/", card)
-        self.assertIn('target="_blank"', card)
+        self.assertIn(f'href="biais/{bias.slug}/"', card)
+        self.assertIn("data-reviewer-card", card)
+        self.assertIn('data-reviewer-href="https://github.com/J2M116/bien-penser-biais-cognitifs/edit/main/', card)
+        self.assertIn("<span data-card-action-label>Lire la fiche</span>", card)
+        self.assertNotIn('target="_blank"', card)
         self.assertIn("Faire évoluer la fiche", detail)
         self.assertIn("Marquer comme revue", detail)
+        self.assertIn('class="review-panel-actions" data-reviewer-only hidden', detail)
+        self.assertIn('class="review-panel-locked" data-reviewer-locked', detail)
 
     def test_review_transition_link_prepares_a_github_request(self) -> None:
         bias = replace(self.biases[0], review_status="non_revue", reviewed_on=None)
@@ -127,7 +136,8 @@ class SiteBuildTests(unittest.TestCase):
 
     def test_review_workflow_is_restricted_to_the_repository_owner(self) -> None:
         workflow = (PROJECT_ROOT / ".github" / "workflows" / "review-state.yml").read_text(encoding="utf-8")
-        self.assertIn("github.actor == 'J2M116'", workflow)
+        self.assertIn("github.actor_id == '158738352'", workflow)
+        self.assertNotIn("github.actor ==", workflow)
         self.assertIn("contents: write", workflow)
         self.assertIn("issues: write", workflow)
 
@@ -156,6 +166,37 @@ class SiteBuildTests(unittest.TestCase):
         self.assertIn('create policy "bias_score_summaries_public_read"', summary_schema)
         self.assertIn("grant select on table public.bias_score_summaries to anon, authenticated", summary_schema)
         self.assertIn("drop function public.get_bias_scores()", summary_schema)
+
+    def test_reviewer_access_cannot_be_self_assigned(self) -> None:
+        schema = (PROJECT_ROOT / "supabase" / "migrations" / "20260813183024_reviewer_access.sql").read_text(
+            encoding="utf-8"
+        )
+        normalized = schema.lower()
+        self.assertIn("alter table public.reviewer_access enable row level security", normalized)
+        self.assertIn('create policy "reviewer_access_select_own"', normalized)
+        self.assertIn("using ((select auth.uid()) = user_id)", normalized)
+        self.assertIn("revoke all on table public.reviewer_access from public, anon, authenticated", normalized)
+        self.assertIn("grant select on table public.reviewer_access to authenticated", normalized)
+        self.assertNotIn("grant insert", normalized)
+        self.assertNotIn("grant update", normalized)
+        self.assertNotIn("grant delete", normalized)
+
+        community = (PROJECT_ROOT / "web" / "assets" / "community.js").read_text(encoding="utf-8")
+        self.assertIn('.from("reviewer_access")', community)
+        self.assertIn('.eq("user_id", state.user.id)', community)
+        self.assertIn("state.canReview = false", community)
+        self.assertNotRegex(schema + community, r"[\w.+-]+@gmail\.com")
+
+    def test_personal_rating_filters_share_a_single_visibility_controller(self) -> None:
+        app = (PROJECT_ROOT / "web" / "assets" / "app.js").read_text(encoding="utf-8")
+        community = (PROJECT_ROOT / "web" / "assets" / "community.js").read_text(encoding="utf-8")
+        event_name = "bienpenser:personal-ratings-changed"
+        self.assertIn(event_name, app)
+        self.assertIn(event_name, community)
+        self.assertIn("state.personal.has(card.dataset.biasId)", community)
+        self.assertIn('card.dataset.userRated === "true"', app)
+        self.assertIn('card.dataset.userRated === "false"', app)
+        self.assertNotIn("card.hidden", community)
 
     def test_only_publishable_supabase_key_is_shipped(self) -> None:
         config = (PROJECT_ROOT / "web" / "assets" / "supabase-config.js").read_text(encoding="utf-8")

@@ -12,9 +12,12 @@
   const count = document.querySelector("#result-count");
   const empty = document.querySelector("#empty-state");
   const familyButtons = Array.from(document.querySelectorAll("[data-family-filter]"));
+  const personalButtons = Array.from(document.querySelectorAll("[data-personal-scope]"));
+  const personalStatus = document.querySelector("[data-personal-filter-status]");
   const evidenceRanks = { forte: 0, moderee: 1, limitee: 2, contestee: 3, a_evaluer: 4 };
   const reviewRanks = { en_revue: 0, non_revue: 1, revue: 2 };
   let selectedFamily = "all";
+  let selectedPersonalScope = "all";
 
   count.setAttribute("aria-live", "polite");
   count.setAttribute("aria-atomic", "true");
@@ -57,7 +60,11 @@
       const matchesImportance = Number(card.dataset.importance) >= minimumImportance;
       const matchesEvidence = selectedEvidence === "all" || card.dataset.evidence === selectedEvidence;
       const matchesReview = selectedReview === "all" || card.dataset.review === selectedReview;
-      const show = matchesSearch && matchesFamily && matchesImportance && matchesEvidence && matchesReview;
+      const matchesPersonal = selectedPersonalScope === "all"
+        || (selectedPersonalScope === "mine" && card.dataset.userRated === "true")
+        || (selectedPersonalScope === "unrated" && card.dataset.userRated === "false");
+      const show = matchesSearch && matchesFamily && matchesImportance && matchesEvidence
+        && matchesReview && matchesPersonal;
       card.hidden = !show;
       if (show) visible += 1;
     });
@@ -82,6 +89,40 @@
     });
   });
 
+  const renderPersonalButtons = () => {
+    personalButtons.forEach((button) => {
+      const active = button.dataset.personalScope === selectedPersonalScope;
+      button.classList.toggle("is-active", active);
+      button.setAttribute("aria-pressed", String(active));
+    });
+  };
+
+  personalButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      selectedPersonalScope = button.dataset.personalScope;
+      renderPersonalButtons();
+      apply();
+    });
+  });
+
+  document.addEventListener("bienpenser:personal-ratings-changed", (event) => {
+    const signedIn = Boolean(event.detail?.signedIn);
+    const ready = Boolean(event.detail?.ready);
+    personalButtons.forEach((button) => {
+      button.disabled = button.dataset.personalScope !== "all" && !ready;
+    });
+    if (!ready) selectedPersonalScope = "all";
+    if (personalStatus) {
+      personalStatus.textContent = ready
+        ? "Vos notes sont chargées : choisissez les fiches notées ou celles qui restent à noter."
+        : signedIn
+          ? "Vos notes n’ont pas pu être chargées ; le catalogue complet reste affiché."
+          : "Connectez-vous pour filtrer le catalogue selon vos notes.";
+    }
+    renderPersonalButtons();
+    apply();
+  });
+
   reset.addEventListener("click", () => {
     search.value = "";
     importance.value = "0";
@@ -89,11 +130,13 @@
     review.value = "all";
     sort.value = "importance";
     selectedFamily = "all";
+    selectedPersonalScope = "all";
     familyButtons.forEach((button) => {
       const active = button.dataset.familyFilter === "all";
       button.classList.toggle("is-active", active);
       button.setAttribute("aria-pressed", String(active));
     });
+    renderPersonalButtons();
     apply();
     search.focus();
   });

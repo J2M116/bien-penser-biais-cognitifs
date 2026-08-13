@@ -301,6 +301,7 @@ def auth_dialog() -> str:
       <p class="eyebrow">Compte connecté</p>
       <h2>Bonjour, <span data-profile-name>membre</span>.</h2>
       <p>Vos évaluations sont enregistrées et vous pouvez les modifier à tout moment.</p>
+      <p class="reviewer-badge" data-reviewer-badge hidden>Accès éditorial activé : vous pouvez faire évoluer les fiches.</p>
       <button class="auth-signout" type="button" data-sign-out>Se déconnecter</button>
     </div>
   </div>
@@ -388,21 +389,26 @@ def render_card(bias: Bias) -> str:
     search_text = " ".join(
         [bias.name_fr, bias.name_en, *bias.aliases_fr, FAMILY_LABELS.get(bias.family, bias.family), bias.short]
     ).casefold()
+    public_url = f"biais/{bias.slug}/"
+    public_aria_label = f"Ouvrir la fiche {bias.name_fr}"
     reviewing = bias.review_status == "en_revue"
-    target_url = edit_url(bias) if reviewing else f"biais/{bias.slug}/"
-    action_label = "Revoir la fiche" if reviewing else "Lire la fiche"
-    target_attributes = ' target="_blank" rel="noreferrer"' if reviewing else ""
-    aria_label = (
-        f"Revoir la fiche {bias.name_fr} dans l'éditeur GitHub"
-        if reviewing
-        else f"Ouvrir la fiche {bias.name_fr}"
-    )
-    return f"""<article class="bias-card" data-bias-card data-family="{html.escape(bias.family)}"
+    reviewer_card_attribute = " data-reviewer-card" if reviewing else ""
+    reviewer_link_attributes = ""
+    if reviewing:
+        reviewer_link_attributes = (
+            f' data-reviewer-href="{html.escape(edit_url(bias), quote=True)}"'
+            f' data-reviewer-aria-label="{html.escape(f"Revoir la fiche {bias.name_fr} dans l\'éditeur GitHub", quote=True)}"'
+        )
+    return f"""<article class="bias-card" data-bias-card data-bias-id="{html.escape(bias.slug)}"
+    data-user-rated="unknown"{reviewer_card_attribute} data-family="{html.escape(bias.family)}"
     data-importance="{bias.importance}" data-evidence="{html.escape(bias.evidence)}"
     data-review="{html.escape(bias.review_status)}"
     data-name="{html.escape(bias.name_fr.casefold(), quote=True)}"
     data-search="{html.escape(search_text, quote=True)}">
-  <a class="card-link" href="{html.escape(target_url, quote=True)}" aria-label="{html.escape(aria_label, quote=True)}"{target_attributes}>
+  <a class="card-link" href="{html.escape(public_url, quote=True)}"
+     aria-label="{html.escape(public_aria_label, quote=True)}" data-card-primary-action
+     data-public-href="{html.escape(public_url, quote=True)}"
+     data-public-aria-label="{html.escape(public_aria_label, quote=True)}"{reviewer_link_attributes}>
     <div class="card-topline">
       {family_badge(bias.family)}
       <span class="card-number">Nº {bias.number}</span>
@@ -417,7 +423,7 @@ def render_card(bias: Bias) -> str:
       {evidence_badge(bias.evidence)}
     </div>
     {community_score(bias, compact=True)}
-    <span class="card-open" aria-hidden="true">{action_label} <span>→</span></span>
+    <span class="card-open" aria-hidden="true"><span data-card-action-label>Lire la fiche</span> <span>→</span></span>
   </a>
 </article>"""
 
@@ -519,6 +525,16 @@ def render_home(biases: list[Bias]) -> str:
       <button id="reset-filters" class="reset-button" type="button">Réinitialiser</button>
     </div>
 
+    <div class="personal-filter-panel">
+      <div class="personal-rating-filters" aria-label="Filtrer selon vos évaluations">
+        <span class="personal-filter-label">Vos évaluations</span>
+        <button class="filter-chip is-active" type="button" data-personal-scope="all" aria-pressed="true">Toutes les fiches</button>
+        <button class="filter-chip" type="button" data-personal-scope="mine" aria-pressed="false" disabled>Notées par moi</button>
+        <button class="filter-chip" type="button" data-personal-scope="unrated" aria-pressed="false" disabled>Non notées par moi</button>
+      </div>
+      <p class="personal-filter-status" data-personal-filter-status aria-live="polite">Connectez-vous pour filtrer le catalogue selon vos notes.</p>
+    </div>
+
     <div class="family-filters" aria-label="Filtrer par famille">
       <button class="filter-chip is-active" type="button" data-family-filter="all" aria-pressed="true">Toutes<span>{len(biases)}</span></button>
       {family_buttons}
@@ -618,8 +634,13 @@ def render_detail(bias: Bias, previous: Bias | None, following: Bias | None) -> 
         <p>{REVIEW_DESCRIPTIONS[bias.review_status]}</p>
         {review_date}
       </div>
-      <div class="review-panel-actions">
-        {review_controls}
+      <div class="review-panel-control">
+        <div class="review-panel-actions" data-reviewer-only hidden>
+          {review_controls}
+        </div>
+        <div class="review-panel-locked" data-reviewer-locked>
+          <p>Les commandes de revue sont réservées au responsable éditorial connecté.</p>
+        </div>
       </div>
     </section>
 
