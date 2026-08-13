@@ -51,6 +51,8 @@ Il utilise uniquement la bibliothèque standard de Python : aucun service d'IA, 
 
 Les comptes et évaluations sont conservés dans Supabase. La page publique ne contient qu'une clé publiable à droits limités ; les politiques de sécurité de la base garantissent qu'une personne ne peut lire ou modifier que ses propres notes. Les agrégats du classement ne révèlent aucun identifiant individuel.
 
+Dans **Supabase → Authentication → URL Configuration**, l'adresse du site et l'adresse de redirection autorisée doivent toutes deux être exactement `https://j2m116.github.io/bien-penser-biais-cognitifs/`. L'inscription transmet également cette adresse explicitement à Supabase afin que le lien de confirmation conserve le sous-chemin GitHub Pages.
+
 Le workflow [`.github/workflows/pages.yml`](.github/workflows/pages.yml) reconstruit et publie automatiquement le site avec GitHub Pages après chaque modification envoyée sur la branche `main`.
 
-Le schéma versionné se trouve dans [`supabase/migrations/20260812_community_ratings.sql`](supabase/migrations/20260812_community_ratings.sql).
+Le schéma versionné se trouve dans [`supabase/migrations/20260813061613_community_ratings.sql`](supabase/migrations/20260813061613_community_ratings.sql), complété par les migrations suivantes du même dossier.

@@ -163,6 +163,14 @@ class SiteBuildTests(unittest.TestCase):
         self.assertNotIn("service_role", config)
         self.assertNotIn("sb_secret_", config)
 
+    def test_signup_redirects_to_the_github_pages_project_path(self) -> None:
+        config = (PROJECT_ROOT / "web" / "assets" / "supabase-config.js").read_text(encoding="utf-8")
+        community = (PROJECT_ROOT / "web" / "assets" / "community.js").read_text(encoding="utf-8")
+        site_url = "https://j2m116.github.io/bien-penser-biais-cognitifs/"
+        self.assertIn(f'export const SITE_URL = "{site_url}";', config)
+        self.assertIn("emailRedirectTo: SITE_URL", community)
+        self.assertIn("import { SITE_URL,", community)
+
     def test_documented_content_has_no_placeholders(self) -> None:
         forbidden = ("à rédiger", "à traduire", "à ajouter", "à documenter")
         for page in (self.output / "biais").glob("*/index.html"):

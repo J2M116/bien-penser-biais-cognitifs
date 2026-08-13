@@ -1,5 +1,5 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.95.0/+esm";
-import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "./supabase-config.js";
+import { SITE_URL, SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "./supabase-config.js";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
@@ -85,6 +85,7 @@ document.querySelectorAll("[data-auth-form]").forEach((form) => {
           password: String(values.get("password")),
           options: {
             data: { display_name: displayName },
+            emailRedirectTo: SITE_URL,
           },
         });
         if (error) throw error;
