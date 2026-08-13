@@ -48,6 +48,7 @@ class SiteBuildTests(unittest.TestCase):
         self.assertEqual(len(self.biases), 39)
         self.assertTrue((self.output / "index.html").is_file())
         self.assertTrue((self.output / "a-propos" / "index.html").is_file())
+        self.assertTrue((self.output / "classement" / "index.html").is_file())
         self.assertTrue((self.output / "404.html").is_file())
         self.assertEqual(len(list((self.output / "biais").glob("*/index.html"))), 39)
 
@@ -59,6 +60,8 @@ class SiteBuildTests(unittest.TestCase):
         self.assertIn('id="evidence-filter"', home)
         self.assertIn('id="review-filter"', home)
         self.assertIn('data-family-filter="all"', home)
+        self.assertIn('href="classement/"', home)
+        self.assertEqual(home.count('data-community-score="'), 39)
         review_states = ("non_revue", "en_revue", "revue")
         self.assertEqual(sum(home.count(f'data-review="{state}"') for state in review_states), 39)
         self.assertEqual(sum(home.count(f'review-state--{state}">') for state in review_states), 39)
@@ -80,7 +83,7 @@ class SiteBuildTests(unittest.TestCase):
         self.assertIn("Marquer comme revue", detail)
 
     def test_review_transition_link_prepares_a_github_request(self) -> None:
-        bias = self.biases[0]
+        bias = replace(self.biases[0], review_status="non_revue", reviewed_on=None)
         request = build_site.review_request_url(bias, "demarrer")
         query = parse_qs(urlsplit(request).query)
         self.assertEqual(query["title"], [f"REVUE | demarrer | {bias.slug}"])
@@ -127,6 +130,38 @@ class SiteBuildTests(unittest.TestCase):
         self.assertIn("github.actor == 'J2M116'", workflow)
         self.assertIn("contents: write", workflow)
         self.assertIn("issues: write", workflow)
+
+    def test_detail_contains_authentication_and_rating_widget(self) -> None:
+        detail = next((self.output / "biais").glob("*/index.html")).read_text(encoding="utf-8")
+        self.assertIn('id="auth-dialog"', detail)
+        self.assertIn('data-rating-widget="', detail)
+        self.assertIn("Votre évaluation", detail)
+        self.assertIn('type="range" min="1" max="100"', detail)
+        self.assertIn('type="module" src="../../assets/community.js"', detail)
+
+    def test_leaderboard_contains_all_documented_biases(self) -> None:
+        leaderboard = (self.output / "classement" / "index.html").read_text(encoding="utf-8")
+        self.assertEqual(leaderboard.count("data-leaderboard-row"), 39)
+        self.assertIn("Classement communautaire", leaderboard)
+        self.assertIn("Score moyen", leaderboard)
+        self.assertIn("Votre note", leaderboard)
+
+    def test_supabase_schema_enforces_private_single_rating(self) -> None:
+        schema = (PROJECT_ROOT / "supabase" / "migrations" / "20260813061613_community_ratings.sql").read_text(encoding="utf-8")
+        self.assertIn("primary key (user_id, bias_id)", schema)
+        self.assertIn("score between 1 and 100", schema)
+        self.assertIn("alter table public.ratings enable row level security", schema)
+        self.assertIn('create policy "ratings_update_own"', schema)
+        summary_schema = (PROJECT_ROOT / "supabase" / "migrations" / "20260813061857_public_score_summaries.sql").read_text(encoding="utf-8")
+        self.assertIn('create policy "bias_score_summaries_public_read"', summary_schema)
+        self.assertIn("grant select on table public.bias_score_summaries to anon, authenticated", summary_schema)
+        self.assertIn("drop function public.get_bias_scores()", summary_schema)
+
+    def test_only_publishable_supabase_key_is_shipped(self) -> None:
+        config = (PROJECT_ROOT / "web" / "assets" / "supabase-config.js").read_text(encoding="utf-8")
+        self.assertIn("sb_publishable_", config)
+        self.assertNotIn("service_role", config)
+        self.assertNotIn("sb_secret_", config)
 
     def test_documented_content_has_no_placeholders(self) -> None:
         forbidden = ("à rédiger", "à traduire", "à ajouter", "à documenter")

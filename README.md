@@ -41,9 +41,16 @@ Le script [`scripts/build_site.py`](scripts/build_site.py) transforme les fiches
 - un suivi individuel `non revue` / `en revue` / `revue`, avec date de dernière revue ;
 - un accès direct à l'éditeur GitHub pour faire évoluer chaque fichier Markdown ;
 - des boutons d'état dans l'interface, confirmés par GitHub puis appliqués et publiés automatiquement ;
+- des comptes par e-mail et mot de passe avec pseudonyme public ;
+- une évaluation personnelle de l'importance de chaque biais, de 1 à 100 ;
+- un classement communautaire présentant moyenne, médiane et nombre d'évaluations ;
 - une page présentant la méthode et les sources ;
 - une mise en page adaptée aux ordinateurs et téléphones.
 
 Il utilise uniquement la bibliothèque standard de Python : aucun service d'IA, token ou dépendance payante n'intervient dans la génération.
 
+Les comptes et évaluations sont conservés dans Supabase. La page publique ne contient qu'une clé publiable à droits limités ; les politiques de sécurité de la base garantissent qu'une personne ne peut lire ou modifier que ses propres notes. Les agrégats du classement ne révèlent aucun identifiant individuel.
+
 Le workflow [`.github/workflows/pages.yml`](.github/workflows/pages.yml) reconstruit et publie automatiquement le site avec GitHub Pages après chaque modification envoyée sur la branche `main`.
+
+Le schéma versionné se trouve dans [`supabase/migrations/20260812_community_ratings.sql`](supabase/migrations/20260812_community_ratings.sql).

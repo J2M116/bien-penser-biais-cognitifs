@@ -264,6 +264,86 @@ def edit_url(bias: Bias) -> str:
     return f"{GITHUB_EDIT_ROOT}/{relative_path}"
 
 
+def account_button() -> str:
+    return (
+        '<button class="account-button" type="button" data-auth-open '
+        'aria-haspopup="dialog"><span class="account-dot" aria-hidden="true"></span>'
+        '<span data-account-label>Se connecter</span></button>'
+    )
+
+
+def auth_dialog() -> str:
+    return """<dialog id="auth-dialog" class="auth-dialog" aria-labelledby="auth-title">
+  <div class="auth-dialog-inner">
+    <form method="dialog" class="dialog-close-form"><button class="dialog-close" aria-label="Fermer">×</button></form>
+    <div data-auth-anonymous>
+      <p class="eyebrow">Espace personnel</p>
+      <h2 id="auth-title">Votre regard compte.</h2>
+      <p class="auth-intro">Connectez-vous pour évaluer l'importance des biais de 1 à 100. Chaque note reste modifiable.</p>
+      <div class="auth-tabs" role="tablist" aria-label="Connexion ou inscription">
+        <button class="is-active" type="button" role="tab" aria-selected="true" data-auth-tab="login">Connexion</button>
+        <button type="button" role="tab" aria-selected="false" data-auth-tab="register">Créer un compte</button>
+      </div>
+      <form class="auth-form" data-auth-form="login">
+        <label><span>Adresse e-mail</span><input name="email" type="email" autocomplete="email" required></label>
+        <label><span>Mot de passe</span><input name="password" type="password" autocomplete="current-password" minlength="6" required></label>
+        <button class="auth-submit" type="submit">Se connecter</button>
+      </form>
+      <form class="auth-form" data-auth-form="register" hidden>
+        <label><span>Pseudonyme public</span><input name="display_name" type="text" autocomplete="nickname" minlength="2" maxlength="40" required></label>
+        <label><span>Adresse e-mail</span><input name="email" type="email" autocomplete="email" required></label>
+        <label><span>Mot de passe</span><input name="password" type="password" autocomplete="new-password" minlength="6" required></label>
+        <button class="auth-submit" type="submit">Créer mon compte</button>
+      </form>
+      <p class="auth-message" data-auth-message aria-live="polite"></p>
+    </div>
+    <div class="auth-profile" data-auth-profile hidden>
+      <p class="eyebrow">Compte connecté</p>
+      <h2>Bonjour, <span data-profile-name>membre</span>.</h2>
+      <p>Vos évaluations sont enregistrées et vous pouvez les modifier à tout moment.</p>
+      <button class="auth-signout" type="button" data-sign-out>Se déconnecter</button>
+    </div>
+  </div>
+</dialog>"""
+
+
+def community_score(bias: Bias, *, compact: bool = False) -> str:
+    modifier = " community-score--compact" if compact else ""
+    return f"""<div class="community-score{modifier}" data-community-score="{html.escape(bias.slug)}">
+  <span class="community-score-label">Score communautaire</span>
+  <strong><span data-score-value>—</span><small>/100</small></strong>
+  <span data-score-count>Aucune évaluation</span>
+</div>"""
+
+
+def rating_widget(bias: Bias) -> str:
+    return f"""<section class="rating-panel" data-rating-widget="{html.escape(bias.slug)}" aria-labelledby="rating-title">
+  <div class="rating-summary">
+    <p class="section-kicker">Importance perçue</p>
+    <h2 id="rating-title">À quel point faut-il y faire attention ?</h2>
+    <p>Donnez votre appréciation personnelle de 1 à 100. Elle n'altère pas le score éditorial de la fiche.</p>
+    {community_score(bias)}
+  </div>
+  <div class="rating-personal">
+    <div data-rating-signed-out>
+      <p><strong>Connectez-vous pour noter ce biais.</strong></p>
+      <button class="rating-login" type="button" data-auth-open>Se connecter ou créer un compte</button>
+    </div>
+    <form data-rating-form hidden>
+      <label for="rating-{html.escape(bias.slug)}">Votre évaluation</label>
+      <div class="rating-value"><output for="rating-{html.escape(bias.slug)}" data-rating-output>50</output><span>/100</span></div>
+      <input id="rating-{html.escape(bias.slug)}" name="score" type="range" min="1" max="100" value="50" step="1">
+      <div class="rating-scale"><span>Peu important</span><span>Très important</span></div>
+      <div class="rating-actions">
+        <button class="rating-save" type="submit">Enregistrer ma note</button>
+        <button class="rating-delete" type="button" data-rating-delete hidden>Supprimer</button>
+      </div>
+      <p class="rating-message" data-rating-message aria-live="polite"></p>
+    </form>
+  </div>
+</section>"""
+
+
 def review_request_url(bias: Bias, action: str) -> str:
     action_labels = {
         "demarrer": "passer la fiche en revue",
@@ -293,10 +373,12 @@ def page_shell(*, title: str, description: str, relative_root: str, body: str, p
   <title>{html.escape(title)}</title>
   <link rel="stylesheet" href="{relative_root}assets/styles.css">
   <script src="{relative_root}assets/app.js" defer></script>
+  <script type="module" src="{relative_root}assets/community.js"></script>
 </head>
 <body class="{page_class}">
   <a class="skip-link" href="#contenu">Aller au contenu</a>
   {body}
+  {auth_dialog()}
 </body>
 </html>
 """
@@ -334,6 +416,7 @@ def render_card(bias: Bias) -> str:
       {importance_marks(bias.importance)}
       {evidence_badge(bias.evidence)}
     </div>
+    {community_score(bias, compact=True)}
     <span class="card-open" aria-hidden="true">{action_label} <span>→</span></span>
   </a>
 </article>"""
@@ -354,7 +437,11 @@ def render_home(biases: list[Bias]) -> str:
       <span class="wordmark-mark" aria-hidden="true">P</span>
       <span><strong>Bien penser</strong><small>Les biais cognitifs</small></span>
     </a>
-    <a class="about-link" href="a-propos/">À propos</a>
+    <nav class="header-actions" aria-label="Navigation principale">
+      <a class="about-link" href="classement/">Classement</a>
+      <a class="about-link" href="a-propos/">À propos</a>
+      {account_button()}
+    </nav>
   </div>
 </header>
 
@@ -364,6 +451,7 @@ def render_home(biases: list[Bias]) -> str:
       <p class="eyebrow">Un catalogue critique et évolutif</p>
       <h1 id="hero-title">Voir les raccourcis<br>qui orientent nos jugements.</h1>
       <p class="hero-intro">Une carte pour comprendre l'essentiel. Une fiche pour examiner les preuves, les limites et les moyens d'agir.</p>
+      <a class="leaderboard-cta" href="classement/">Voir le classement communautaire <span aria-hidden="true">→</span></a>
       <div class="hero-stats" aria-label="Contenu du catalogue">
         <span><strong>{len(biases)}</strong> fiches documentées</span>
         <span><strong>{reviews['revue']}</strong> fiches revues</span>
@@ -448,7 +536,7 @@ def render_home(biases: list[Bias]) -> str:
 
 <footer class="site-footer">
   <p>Contenu ouvert à la révision — les scores d'importance restent provisoires.</p>
-  <a href="a-propos/">Méthode et sources</a>
+  <div class="site-footer-links"><a href="classement/">Classement</a><a href="a-propos/">Méthode et sources</a></div>
 </footer>"""
     return page_shell(
         title="Bien penser — Les biais cognitifs",
@@ -500,7 +588,11 @@ def render_detail(bias: Bias, previous: Bias | None, following: Bias | None) -> 
       <span class="wordmark-mark" aria-hidden="true">P</span>
       <span><strong>Bien penser</strong><small>Les biais cognitifs</small></span>
     </a>
-    <a class="back-link" href="../../">← Toutes les cartes</a>
+    <nav class="header-actions" aria-label="Navigation principale">
+      <a class="back-link" href="../../">← Toutes les cartes</a>
+      <a class="about-link" href="../../classement/">Classement</a>
+      {account_button()}
+    </nav>
   </div>
 </header>
 
@@ -530,6 +622,8 @@ def render_detail(bias: Bias, previous: Bias | None, following: Bias | None) -> 
         {review_controls}
       </div>
     </section>
+
+    {rating_widget(bias)}
 
     <div class="article-layout">
       <aside class="example-panel">
@@ -575,7 +669,7 @@ def render_detail(bias: Bias, previous: Bias | None, following: Bias | None) -> 
 
 <footer class="site-footer detail-footer">
   <p>« Travaillons donc à bien penser. » — Blaise Pascal</p>
-  <a href="../../a-propos/">Méthode et sources</a>
+  <div class="site-footer-links"><a href="../../classement/">Classement</a><a href="../../a-propos/">Méthode et sources</a></div>
 </footer>"""
     return page_shell(
         title=f"{bias.name_fr} — Bien penser",
@@ -595,7 +689,11 @@ def render_about(biases: list[Bias]) -> str:
       <span class="wordmark-mark" aria-hidden="true">P</span>
       <span><strong>Bien penser</strong><small>Les biais cognitifs</small></span>
     </a>
-    <a class="back-link" href="../">← Toutes les cartes</a>
+    <nav class="header-actions" aria-label="Navigation principale">
+      <a class="back-link" href="../">← Toutes les cartes</a>
+      <a class="about-link" href="../classement/">Classement</a>
+      {account_button()}
+    </nav>
   </div>
 </header>
 <main id="contenu" class="about-main">
@@ -637,13 +735,77 @@ def render_about(biases: list[Bias]) -> str:
     <p>Chaque fiche renvoie en outre vers une publication scientifique propre au phénomène. Les scores sont provisoires et seront révisés à partir de la fréquence, de la gravité, de la diversité des domaines et de l'actionnabilité.</p>
   </section>
 </main>
-<footer class="site-footer detail-footer"><p>Bien penser — catalogue critique des biais cognitifs</p><a href="../">Explorer les cartes</a></footer>"""
+<footer class="site-footer detail-footer"><p>Bien penser — catalogue critique des biais cognitifs</p><div class="site-footer-links"><a href="../classement/">Classement</a><a href="../">Explorer les cartes</a></div></footer>"""
     return page_shell(
         title="Méthode et sources — Bien penser",
         description="Méthode, niveaux de preuve et sources du catalogue Bien penser.",
         relative_root="../",
         body=body,
         page_class="about-page",
+    )
+
+
+def render_leaderboard(biases: list[Bias]) -> str:
+    rows = "\n".join(
+        f"""<tr data-leaderboard-row data-bias-id="{html.escape(bias.slug)}" data-name="{html.escape(bias.name_fr.casefold(), quote=True)}" data-family="{html.escape(bias.family)}">
+  <td class="leaderboard-rank" data-rank>—</td>
+  <th scope="row"><a href="../biais/{html.escape(bias.slug)}/">{html.escape(bias.name_fr)}</a><span>{html.escape(FAMILY_LABELS.get(bias.family, bias.family))}</span></th>
+  <td class="leaderboard-score"><strong data-score>—</strong><span>/100</span></td>
+  <td data-median>—</td>
+  <td data-count>0</td>
+  <td class="leaderboard-personal" data-personal>—</td>
+</tr>"""
+        for bias in biases
+    )
+    family_options = "\n".join(
+        f'<option value="{html.escape(key)}">{html.escape(label)}</option>'
+        for key, label in sorted(FAMILY_LABELS.items(), key=lambda item: item[1])
+    )
+    body = f"""<header class="site-header detail-header">
+  <div class="header-inner">
+    <a class="wordmark" href="../" aria-label="Bien penser, retour au catalogue">
+      <span class="wordmark-mark" aria-hidden="true">P</span>
+      <span><strong>Bien penser</strong><small>Les biais cognitifs</small></span>
+    </a>
+    <nav class="header-actions" aria-label="Navigation principale">
+      <a class="back-link" href="../">← Toutes les cartes</a>
+      <a class="about-link" href="../a-propos/">À propos</a>
+      {account_button()}
+    </nav>
+  </div>
+</header>
+<main id="contenu" class="leaderboard-main" data-leaderboard>
+  <header class="leaderboard-hero">
+    <p class="eyebrow">Classement communautaire</p>
+    <h1>Les biais auxquels<br>nous devrions prêter attention.</h1>
+    <p>Ce classement rassemble les évaluations personnelles de 1 à 100. Il ne remplace ni le niveau de preuve scientifique ni l'importance éditoriale.</p>
+  </header>
+  <section class="leaderboard-section" aria-labelledby="leaderboard-title">
+    <div class="leaderboard-heading">
+      <div><p class="section-kicker">Tableau des scores</p><h2 id="leaderboard-title">Classement des biais</h2></div>
+      <p><span data-ratings-total>0</span> évaluations enregistrées</p>
+    </div>
+    <div class="leaderboard-controls">
+      <label><span>Rechercher</span><input type="search" data-leaderboard-search placeholder="Un biais…"></label>
+      <label><span>Famille</span><select data-leaderboard-family><option value="all">Toutes</option>{family_options}</select></label>
+      <label><span>Afficher</span><select data-leaderboard-scope><option value="all">Tous les biais</option><option value="rated">Avec évaluations</option><option value="mine">Mes évaluations</option></select></label>
+    </div>
+    <div class="leaderboard-table-wrap">
+      <table class="leaderboard-table">
+        <thead><tr><th>Rang</th><th>Biais</th><th>Score moyen</th><th>Médiane</th><th>Notes</th><th>Votre note</th></tr></thead>
+        <tbody>{rows}</tbody>
+      </table>
+    </div>
+    <p class="leaderboard-note">Un score est signalé comme provisoire lorsqu'il repose sur moins de trois évaluations. À égalité, le nombre de votants départage les biais.</p>
+  </section>
+</main>
+<footer class="site-footer detail-footer"><p>Bien penser — classement communautaire</p><a href="../">Explorer les cartes</a></footer>"""
+    return page_shell(
+        title="Classement communautaire — Bien penser",
+        description="Classement des biais cognitifs selon les évaluations d'importance de la communauté.",
+        relative_root="../",
+        body=body,
+        page_class="leaderboard-page",
     )
 
 
@@ -679,6 +841,10 @@ def build(output: Path) -> list[Bias]:
     about_dir = output / "a-propos"
     about_dir.mkdir()
     (about_dir / "index.html").write_text(render_about(biases), encoding="utf-8")
+
+    leaderboard_dir = output / "classement"
+    leaderboard_dir.mkdir()
+    (leaderboard_dir / "index.html").write_text(render_leaderboard(biases), encoding="utf-8")
 
     bias_root = output / "biais"
     for index, bias in enumerate(biases):
