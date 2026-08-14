@@ -38,6 +38,7 @@ jobs:
         run: |
           python -m unittest discover -s tests -v
           node --check web/assets/app.js
+          node --check web/assets/install.js
           node --check web/assets/community.js
 
       - name: Enregistrer le nouvel état
@@ -76,6 +77,7 @@ jobs:
         run: |
           python -m unittest discover -s tests -v
           node --check web/assets/app.js
+          node --check web/assets/install.js
           node --check web/assets/community.js
 
       - name: Générer le site statique

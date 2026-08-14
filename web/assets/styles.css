@@ -72,6 +72,10 @@ select {
   transform: translateY(0);
 }
 
+.mobile-nav {
+  display: none;
+}
+
 .site-header {
   position: relative;
   z-index: 10;
@@ -161,6 +165,27 @@ select {
   background: transparent;
   font-size: 0.74rem;
   font-weight: 700;
+}
+
+[data-account-label] {
+  max-width: min(18vw, 10rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.install-button {
+  min-height: 38px;
+  padding: 0.45rem 0.75rem;
+  border: 1px solid var(--gold-light);
+  color: var(--ink);
+  background: var(--gold-light);
+  font-size: 0.74rem;
+  font-weight: 800;
+}
+
+.install-button[hidden] {
+  display: none;
 }
 
 .account-button:hover,
@@ -1408,22 +1433,27 @@ select {
   display: none;
 }
 
-.auth-dialog {
+.auth-dialog,
+.install-dialog {
   width: min(calc(100% - 2rem), 520px);
   max-height: calc(100vh - 2rem);
+  max-height: calc(100dvh - 2rem);
   padding: 0;
+  overflow-y: auto;
   border: 0;
   color: var(--ink);
   background: var(--surface);
   box-shadow: 0 30px 100px rgba(8, 18, 30, 0.35);
 }
 
-.auth-dialog::backdrop {
+.auth-dialog::backdrop,
+.install-dialog::backdrop {
   background: rgba(10, 22, 37, 0.72);
   backdrop-filter: blur(3px);
 }
 
-.auth-dialog-inner {
+.auth-dialog-inner,
+.install-dialog-inner {
   position: relative;
   padding: clamp(1.7rem, 6vw, 3rem);
 }
@@ -1449,6 +1479,28 @@ select {
   font-size: clamp(2.2rem, 7vw, 3.5rem);
   font-weight: 400;
   line-height: 1;
+}
+
+.install-dialog h2 {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: clamp(2.2rem, 7vw, 3.5rem);
+  font-weight: 400;
+  line-height: 1;
+}
+
+.install-dialog p:not(.eyebrow) {
+  color: var(--ink-soft);
+  line-height: 1.7;
+}
+
+.install-confirm {
+  min-height: 46px;
+  padding: 0.7rem 1rem;
+  border: 0;
+  color: var(--ink);
+  background: var(--gold-light);
+  font-weight: 800;
 }
 
 .auth-intro,
@@ -1990,7 +2042,201 @@ select {
   }
 }
 
+@media (max-width: 800px), (max-height: 500px) and (pointer: coarse) {
+  body {
+    padding-bottom: calc(68px + env(safe-area-inset-bottom));
+    padding-right: env(safe-area-inset-right);
+    padding-left: env(safe-area-inset-left);
+  }
+
+  .mobile-nav {
+    position: fixed;
+    z-index: 90;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    padding: 0 env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+    border-top: 1px solid rgba(255, 255, 255, 0.18);
+    color: white;
+    background: rgba(21, 39, 63, 0.97);
+    box-shadow: 0 -10px 30px rgba(8, 18, 30, 0.18);
+  }
+
+  .mobile-nav a {
+    display: flex;
+    min-height: 58px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.08rem;
+    font-size: 0.7rem;
+    font-weight: 750;
+    text-decoration: none;
+  }
+
+  .mobile-nav a + a {
+    border-left: 1px solid rgba(255, 255, 255, 0.14);
+  }
+
+  .mobile-nav span {
+    color: var(--gold-light);
+    font-family: var(--serif);
+    font-size: 1.1rem;
+    line-height: 1;
+  }
+
+  .header-actions .back-link,
+  .header-actions .about-link {
+    display: none;
+  }
+
+  .leaderboard-table-wrap {
+    overflow: visible;
+    border: 0;
+    background: transparent;
+  }
+
+  .leaderboard-table,
+  .leaderboard-table tbody,
+  .leaderboard-table tr {
+    display: block;
+    width: 100%;
+    min-width: 0;
+  }
+
+  .leaderboard-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .leaderboard-table tr {
+    margin-bottom: 0.85rem;
+    padding: 1rem;
+    border: 1px solid var(--line-strong);
+    background: var(--surface);
+  }
+
+  .leaderboard-table tr[hidden] {
+    display: none;
+  }
+
+  .leaderboard-table th,
+  .leaderboard-table td {
+    display: grid;
+    grid-template-columns: minmax(92px, 0.8fr) minmax(0, 1.2fr);
+    gap: 0.75rem;
+    align-items: center;
+    padding: 0.65rem 0;
+    border-bottom: 1px solid var(--line);
+    text-align: right;
+  }
+
+  .leaderboard-table th::before,
+  .leaderboard-table td::before {
+    color: var(--ink-soft);
+    content: attr(data-label);
+    font-family: var(--sans);
+    font-size: 0.72rem;
+    font-weight: 750;
+    letter-spacing: 0.04em;
+    text-align: left;
+    text-transform: uppercase;
+  }
+
+  .leaderboard-table tbody th::before {
+    grid-row: 1 / span 2;
+  }
+
+  .leaderboard-table tbody th a,
+  .leaderboard-table tbody th span {
+    grid-column: 2;
+  }
+
+  .leaderboard-table .leaderboard-score {
+    grid-template-columns: minmax(92px, 0.8fr) auto auto;
+  }
+
+  .leaderboard-table tr > :last-child {
+    border-bottom: 0;
+  }
+
+  .leaderboard-table tbody th {
+    font-size: 1.25rem;
+  }
+}
+
+@media (max-width: 620px), (max-height: 500px) and (pointer: coarse) {
+  .account-button,
+  .install-button {
+    min-height: 44px;
+    padding: 0.5rem 0.65rem;
+  }
+
+  .auth-dialog,
+  .install-dialog {
+    width: 100%;
+    max-width: none;
+    max-height: 100vh;
+    max-height: 100dvh;
+    margin: 0;
+  }
+
+  .auth-dialog-inner,
+  .install-dialog-inner {
+    min-height: 100vh;
+    min-height: 100dvh;
+    padding: max(3.5rem, env(safe-area-inset-top)) max(1.25rem, env(safe-area-inset-right)) max(1.5rem, env(safe-area-inset-bottom)) max(1.25rem, env(safe-area-inset-left));
+  }
+
+  .dialog-close {
+    width: 44px;
+    height: 44px;
+  }
+
+  .dialog-close-form {
+    top: max(0.4rem, env(safe-area-inset-top));
+    right: max(0.4rem, env(safe-area-inset-right));
+  }
+
+  .controls input,
+  .controls select,
+  .leaderboard-controls input,
+  .leaderboard-controls select,
+  .auth-form input,
+  .personal-example-editor textarea {
+    font-size: 16px;
+  }
+
+  .filter-chip,
+  [data-examples-retry],
+  .examples-more,
+  .rating-login,
+  .rating-save,
+  .rating-delete,
+  .example-login,
+  .example-save,
+  .example-delete,
+  .auth-tabs button,
+  .auth-submit,
+  .auth-signout,
+  .install-confirm {
+    min-height: 44px;
+  }
+
+  .rating-personal input[type="range"] {
+    min-height: 44px;
+  }
+}
+
 @media (max-width: 620px) {
+
   .header-inner,
   .catalogue,
   .detail-main,
@@ -2016,22 +2262,16 @@ select {
     gap: 0.55rem;
   }
 
-  .header-actions .back-link,
-  .header-actions .about-link {
-    display: none;
-  }
-
-  .account-button {
-    padding: 0.4rem 0.6rem;
-  }
-
   .hero {
+    min-height: auto;
+    padding-top: 3.5rem;
+    padding-bottom: 4rem;
     padding-right: 1rem;
     padding-left: 1rem;
   }
 
   .hero h1 {
-    font-size: clamp(3rem, 16vw, 4.6rem);
+    font-size: clamp(2.8rem, 14vw, 4.2rem);
   }
 
   .hero-stats {
@@ -2072,6 +2312,7 @@ select {
 
   .controls {
     grid-template-columns: 1fr;
+    margin-top: 1.6rem;
   }
 
   .search-field {
@@ -2089,6 +2330,7 @@ select {
   .site-footer {
     align-items: flex-start;
     flex-direction: column;
+    padding-bottom: max(2.1rem, env(safe-area-inset-bottom));
   }
 
   .bias-hero h1 {
@@ -2116,6 +2358,13 @@ select {
   .bias-navigation a.next {
     align-items: flex-start;
     text-align: left;
+  }
+
+}
+
+@media (display-mode: standalone) {
+  .site-header {
+    padding-top: env(safe-area-inset-top);
   }
 }
 

@@ -48,9 +48,13 @@ Le script [`scripts/build_site.py`](scripts/build_site.py) transforme les fiches
 - une galerie publique des exemples partagés, avec un cœur au maximum par compte et par exemple ;
 - un classement communautaire présentant moyenne, médiane et nombre d'évaluations ;
 - une page présentant la méthode et les sources ;
-- une mise en page adaptée aux ordinateurs et téléphones.
+- une mise en page adaptée aux ordinateurs et téléphones ;
+- une installation sur l'écran d'accueil de l'iPhone grâce au manifeste web et à une aide intégrée ;
+- une navigation et des contrôles tactiles adaptés aux petits écrans, sans modifier la présentation de bureau.
 
 Il utilise uniquement la bibliothèque standard de Python : aucun service d'IA, token ou dépendance payante n'intervient dans la génération.
+
+Sur iPhone, ouvrir le site dans Safari, toucher **Partager**, puis **Sur l'écran d'accueil**. Si l'option est proposée, activer **Ouvrir comme app web**, puis toucher **Ajouter**. Le bouton **Installer** présent dans le site rappelle ces étapes lorsqu'elles sont utiles.
 
 Les comptes, évaluations, exemples personnels et cœurs sont conservés dans Supabase. La page publique ne contient qu'une clé publiable à droits limités ; les politiques de sécurité de la base garantissent qu'une personne ne peut modifier que ses propres notes, exemples et cœurs. La galerie publique est alimentée par une projection séparée qui contient uniquement le texte, les dates et le total des cœurs : elle n'expose ni e-mail, ni identifiant d'auteur, ni vote individuel. Le droit éditorial est conservé séparément : un compte peut uniquement vérifier son propre droit, sans pouvoir se l'accorder. GitHub vérifie indépendamment l'identifiant immuable du propriétaire avant toute modification automatisée du catalogue.
 

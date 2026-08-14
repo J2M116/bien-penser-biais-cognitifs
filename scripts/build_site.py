@@ -73,6 +73,7 @@ FRENCH_MONTHS = (
 GITHUB_REPOSITORY = "https://github.com/J2M116/bien-penser-biais-cognitifs"
 GITHUB_EDIT_ROOT = f"{GITHUB_REPOSITORY}/edit/main"
 GITHUB_NEW_ISSUE = f"{GITHUB_REPOSITORY}/issues/new"
+PUBLIC_SITE_URL = "https://j2m116.github.io/bien-penser-biais-cognitifs/"
 
 
 @dataclass(frozen=True)
@@ -272,6 +273,36 @@ def account_button() -> str:
     )
 
 
+def install_button() -> str:
+    return '<button class="install-button" type="button" data-install-open hidden>Installer</button>'
+
+
+def install_dialog() -> str:
+    return """<dialog id="install-dialog" class="install-dialog" aria-labelledby="install-title">
+  <div class="install-dialog-inner">
+    <form method="dialog" class="dialog-close-form"><button class="dialog-close" aria-label="Fermer">×</button></form>
+    <p class="eyebrow">Bien penser sur votre appareil</p>
+    <h2 id="install-title">Installer l’application</h2>
+    <div data-install-ios-instructions hidden>
+      <p>Dans Safari, touchez <strong>Partager</strong>, puis <strong>Sur l’écran d’accueil</strong>. Si l’option est proposée, activez «&nbsp;Ouvrir comme app web&nbsp;», puis touchez <strong>Ajouter</strong>.</p>
+    </div>
+    <div data-install-browser-instructions hidden>
+      <p>Installez Bien penser pour l’ouvrir directement depuis votre écran d’accueil ou votre bureau.</p>
+      <button class="install-confirm" type="button" data-install-confirm>Installer l’application</button>
+    </div>
+  </div>
+</dialog>"""
+
+
+def mobile_navigation(relative_root: str) -> str:
+    root = relative_root or "./"
+    return f"""<nav class="mobile-nav" aria-label="Navigation mobile">
+  <a href="{root}"><span aria-hidden="true">⌂</span>Catalogue</a>
+  <a href="{root}classement/"><span aria-hidden="true">↗</span>Classement</a>
+  <a href="{root}a-propos/"><span aria-hidden="true">i</span>Méthode</a>
+</nav>"""
+
+
 def auth_dialog() -> str:
     return """<dialog id="auth-dialog" class="auth-dialog" aria-labelledby="auth-title">
   <div class="auth-dialog-inner">
@@ -421,18 +452,27 @@ def page_shell(*, title: str, description: str, relative_root: str, body: str, p
 <html lang="fr">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="description" content="{html.escape(description, quote=True)}">
   <meta name="theme-color" content="#15273f">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Bien penser">
   <title>{html.escape(title)}</title>
+  <link rel="manifest" href="{relative_root}assets/manifest.webmanifest">
+  <link rel="apple-touch-icon" sizes="180x180" href="{relative_root}assets/icons/apple-touch-icon.png">
+  <link rel="icon" type="image/png" sizes="32x32" href="{relative_root}assets/icons/favicon-32.png">
   <link rel="stylesheet" href="{relative_root}assets/styles.css">
   <script src="{relative_root}assets/app.js" defer></script>
+  <script src="{relative_root}assets/install.js" defer></script>
   <script type="module" src="{relative_root}assets/community.js"></script>
 </head>
 <body class="{page_class}">
   <a class="skip-link" href="#contenu">Aller au contenu</a>
+  {mobile_navigation(relative_root)}
   {body}
   {auth_dialog()}
+  {install_dialog()}
 </body>
 </html>
 """
@@ -508,6 +548,7 @@ def render_home(biases: list[Bias]) -> str:
     <nav class="header-actions" aria-label="Navigation principale">
       <a class="about-link" href="classement/">Classement</a>
       <a class="about-link" href="a-propos/">À propos</a>
+      {install_button()}
       {account_button()}
     </nav>
   </div>
@@ -669,6 +710,7 @@ def render_detail(bias: Bias, previous: Bias | None, following: Bias | None) -> 
     <nav class="header-actions" aria-label="Navigation principale">
       <a class="back-link" href="../../">← Toutes les cartes</a>
       <a class="about-link" href="../../classement/">Classement</a>
+      {install_button()}
       {account_button()}
     </nav>
   </div>
@@ -779,6 +821,7 @@ def render_about(biases: list[Bias]) -> str:
     <nav class="header-actions" aria-label="Navigation principale">
       <a class="back-link" href="../">← Toutes les cartes</a>
       <a class="about-link" href="../classement/">Classement</a>
+      {install_button()}
       {account_button()}
     </nav>
   </div>
@@ -835,12 +878,12 @@ def render_about(biases: list[Bias]) -> str:
 def render_leaderboard(biases: list[Bias]) -> str:
     rows = "\n".join(
         f"""<tr data-leaderboard-row data-bias-id="{html.escape(bias.slug)}" data-name="{html.escape(bias.name_fr.casefold(), quote=True)}" data-family="{html.escape(bias.family)}">
-  <td class="leaderboard-rank" data-rank>—</td>
-  <th scope="row"><a href="../biais/{html.escape(bias.slug)}/">{html.escape(bias.name_fr)}</a><span>{html.escape(FAMILY_LABELS.get(bias.family, bias.family))}</span></th>
-  <td class="leaderboard-score"><strong data-score>—</strong><span>/100</span></td>
-  <td data-median>—</td>
-  <td data-count>0</td>
-  <td class="leaderboard-personal" data-personal>—</td>
+  <td class="leaderboard-rank" data-label="Rang" data-rank>—</td>
+  <th scope="row" data-label="Biais"><a href="../biais/{html.escape(bias.slug)}/">{html.escape(bias.name_fr)}</a><span>{html.escape(FAMILY_LABELS.get(bias.family, bias.family))}</span></th>
+  <td class="leaderboard-score" data-label="Score moyen"><strong data-score>—</strong><span>/100</span></td>
+  <td data-label="Médiane" data-median>—</td>
+  <td data-label="Notes" data-count>0</td>
+  <td class="leaderboard-personal" data-label="Votre note" data-personal>—</td>
 </tr>"""
         for bias in biases
     )
@@ -857,6 +900,7 @@ def render_leaderboard(biases: list[Bias]) -> str:
     <nav class="header-actions" aria-label="Navigation principale">
       <a class="back-link" href="../">← Toutes les cartes</a>
       <a class="about-link" href="../a-propos/">À propos</a>
+      {install_button()}
       {account_button()}
     </nav>
   </div>
@@ -943,13 +987,19 @@ def build(output: Path) -> list[Bias]:
             render_detail(bias, previous, following), encoding="utf-8"
         )
 
+    not_found_body = f"""<main id="contenu" class="error-main">
+  <p class="eyebrow">Erreur 404</p>
+  <h1>Cette page s’est égarée.</h1>
+  <p>Le catalogue, lui, est toujours là.</p>
+  <a class="primary-link" href="{PUBLIC_SITE_URL}">Retour aux cartes</a>
+</main>"""
     (output / "404.html").write_text(
         page_shell(
             title="Page introuvable — Bien penser",
             description="Cette page n'existe pas.",
-            relative_root="",
+            relative_root=PUBLIC_SITE_URL,
             page_class="error-page",
-            body='<main id="contenu" class="error-main"><p class="eyebrow">Erreur 404</p><h1>Cette page s’est égarée.</h1><p>Le catalogue, lui, est toujours là.</p><a class="primary-link" href="./">Retour aux cartes</a></main>',
+            body=not_found_body,
         ),
         encoding="utf-8",
     )

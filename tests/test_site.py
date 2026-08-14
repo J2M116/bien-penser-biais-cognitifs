@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 import re
+import struct
 import sys
 import tempfile
 import unittest
@@ -52,6 +54,58 @@ class SiteBuildTests(unittest.TestCase):
         self.assertTrue((self.output / "classement" / "index.html").is_file())
         self.assertTrue((self.output / "404.html").is_file())
         self.assertEqual(len(list((self.output / "biais").glob("*/index.html"))), 39)
+
+    def test_pwa_manifest_and_icons_are_generated(self) -> None:
+        manifest_path = self.output / "assets" / "manifest.webmanifest"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        self.assertEqual(manifest["name"], "Bien penser — Les biais cognitifs")
+        self.assertEqual(manifest["short_name"], "Bien penser")
+        self.assertEqual(manifest["lang"], "fr")
+        self.assertEqual(manifest["display"], "standalone")
+        self.assertEqual(manifest["start_url"], "../")
+        self.assertEqual(manifest["scope"], "../")
+        self.assertEqual((manifest_path.parent / manifest["start_url"]).resolve(), self.output.resolve())
+        self.assertEqual((manifest_path.parent / manifest["scope"]).resolve(), self.output.resolve())
+        self.assertEqual(manifest["theme_color"], "#15273f")
+        self.assertEqual(manifest["background_color"], "#f3eee5")
+
+        expected_sizes = {
+            "icons/icon-192.png": (192, 192),
+            "icons/icon-512.png": (512, 512),
+            "icons/icon-maskable-512.png": (512, 512),
+            "icons/apple-touch-icon.png": (180, 180),
+            "icons/favicon-32.png": (32, 32),
+        }
+        purposes = {icon["purpose"] for icon in manifest["icons"]}
+        self.assertEqual(purposes, {"any", "maskable"})
+        for relative_path, dimensions in expected_sizes.items():
+            image_path = manifest_path.parent / relative_path
+            self.assertTrue(image_path.is_file(), relative_path)
+            data = image_path.read_bytes()
+            self.assertEqual(data[:8], b"\x89PNG\r\n\x1a\n")
+            self.assertEqual(struct.unpack(">II", data[16:24]), dimensions)
+
+    def test_every_page_has_installable_metadata_with_resolving_paths(self) -> None:
+        pages = list(self.output.rglob("*.html"))
+        self.assertEqual(len(pages), 43)
+        for page in pages:
+            content = page.read_text(encoding="utf-8")
+            self.assertEqual(content.count('rel="manifest"'), 1, page)
+            self.assertEqual(content.count('rel="apple-touch-icon"'), 1, page)
+            self.assertIn("viewport-fit=cover", content, page)
+            self.assertIn('name="apple-mobile-web-app-capable" content="yes"', content, page)
+            self.assertIn('name="apple-mobile-web-app-title" content="Bien penser"', content, page)
+            self.assertIn('id="install-dialog"', content, page)
+            self.assertIn("Partager", content, page)
+            self.assertIn("Sur l’écran d’accueil", content, page)
+            self.assertIn('class="mobile-nav"', content, page)
+            if page.name != "404.html":
+                self.assertIn("data-install-open hidden", content, page)
+
+        not_found = (self.output / "404.html").read_text(encoding="utf-8")
+        self.assertIn(f'href="{build_site.PUBLIC_SITE_URL}assets/manifest.webmanifest"', not_found)
+        self.assertIn(f'href="{build_site.PUBLIC_SITE_URL}"', not_found)
+        self.assertNotIn('href="assets/manifest.webmanifest"', not_found)
 
     def test_home_contains_cards_and_controls(self) -> None:
         home = (self.output / "index.html").read_text(encoding="utf-8")
@@ -177,6 +231,8 @@ class SiteBuildTests(unittest.TestCase):
         self.assertIn("Classement communautaire", leaderboard)
         self.assertIn("Score moyen", leaderboard)
         self.assertIn("Votre note", leaderboard)
+        for label in ("Rang", "Biais", "Score moyen", "Médiane", "Notes", "Votre note"):
+            self.assertEqual(leaderboard.count(f'data-label="{label}"'), 39)
 
     def test_supabase_schema_enforces_private_single_rating(self) -> None:
         schema = (PROJECT_ROOT / "supabase" / "migrations" / "20260813061613_community_ratings.sql").read_text(encoding="utf-8")
@@ -281,6 +337,7 @@ class SiteBuildTests(unittest.TestCase):
             self.assertGreaterEqual(tests_position, 0, workflow_path)
             self.assertGreater(build_position, tests_position, workflow_path)
             self.assertIn("node --check web/assets/app.js", workflow)
+            self.assertIn("node --check web/assets/install.js", workflow)
             self.assertIn("node --check web/assets/community.js", workflow)
 
         review_workflow = (PROJECT_ROOT / ".github" / "workflows" / "review-state.yml").read_text(
@@ -294,6 +351,28 @@ class SiteBuildTests(unittest.TestCase):
         commit_position = review_workflow.find("git commit -m", precommit_tests_position)
         self.assertGreater(precommit_tests_position, apply_position)
         self.assertGreater(commit_position, precommit_tests_position)
+
+    def test_mobile_contract_preserves_desktop_layout(self) -> None:
+        styles = (PROJECT_ROOT / "web" / "assets" / "styles.css").read_text(encoding="utf-8")
+        install = (PROJECT_ROOT / "web" / "assets" / "install.js").read_text(encoding="utf-8")
+        self.assertIn("grid-template-columns: repeat(3, minmax(0, 1fr))", styles)
+        self.assertIn("grid-template-columns: repeat(2, minmax(0, 1fr))", styles)
+        self.assertIn("min-width: 760px", styles)
+        responsive = styles.split('@media (max-width: 800px), (max-height: 500px) and (pointer: coarse)', 1)[1]
+        touch = styles.split('@media (max-width: 620px), (max-height: 500px) and (pointer: coarse)', 1)[1]
+        self.assertIn("font-size: 16px", touch)
+        self.assertIn("min-height: 44px", touch)
+        self.assertIn("100dvh", touch)
+        self.assertIn("env(safe-area-inset-bottom)", responsive)
+        self.assertIn(".leaderboard-table tr", responsive)
+        self.assertIn(".leaderboard-table tr[hidden]", responsive)
+        self.assertIn("grid-row: 1 / span 2", responsive)
+        self.assertIn('content: attr(data-label)', responsive)
+        self.assertIn('(display-mode: standalone)', install)
+        self.assertIn("window.navigator.standalone", install)
+        self.assertIn('window.navigator.platform === "MacIntel"', install)
+        self.assertIn('window.addEventListener("beforeinstallprompt"', install)
+        self.assertIn('window.addEventListener("appinstalled"', install)
 
     def test_personal_rating_filters_share_a_single_visibility_controller(self) -> None:
         app = (PROJECT_ROOT / "web" / "assets" / "app.js").read_text(encoding="utf-8")
