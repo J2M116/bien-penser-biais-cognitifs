@@ -32,6 +32,9 @@ jobs:
           node --check web/assets/app.js
           node --check web/assets/install.js
           node --check web/assets/community.js
+          node --check web/assets/i18n.js
+          node --check web/assets/language.js
+          node --check web/assets/not-found.js
 
       - name: Générer le site statique
         run: python scripts/build_site.py --output _site

@@ -2,6 +2,8 @@
   const grid = document.querySelector("#bias-grid");
   if (!grid) return;
 
+  const { locale, t, formatNumber, collator } = window.BienPenserI18n;
+
   const cards = Array.from(grid.querySelectorAll("[data-bias-card]"));
   const search = document.querySelector("#search");
   const importance = document.querySelector("#importance-filter");
@@ -26,7 +28,7 @@
     value
       .normalize("NFD")
       .replace(/[\u0300-\u036f]/g, "")
-      .toLocaleLowerCase("fr");
+      .toLocaleLowerCase(locale);
 
   const apply = () => {
     const query = normalize(search.value.trim());
@@ -36,7 +38,7 @@
 
     const ordered = [...cards].sort((a, b) => {
       if (sort.value === "alphabetical") {
-        return a.dataset.name.localeCompare(b.dataset.name, "fr");
+        return collator.compare(a.dataset.name, b.dataset.name);
       }
       if (sort.value === "evidence") {
         const rank = evidenceRanks[a.dataset.evidence] - evidenceRanks[b.dataset.evidence];
@@ -48,7 +50,7 @@
       }
       const importanceDifference = Number(b.dataset.importance) - Number(a.dataset.importance);
       if (importanceDifference !== 0) return importanceDifference;
-      return a.dataset.name.localeCompare(b.dataset.name, "fr");
+      return collator.compare(a.dataset.name, b.dataset.name);
     });
 
     ordered.forEach((card) => grid.appendChild(card));
@@ -69,7 +71,7 @@
       if (show) visible += 1;
     });
 
-    count.textContent = String(visible);
+    count.textContent = formatNumber(visible);
     empty.hidden = visible !== 0;
   };
 
@@ -114,10 +116,10 @@
     if (!ready) selectedPersonalScope = "all";
     if (personalStatus) {
       personalStatus.textContent = ready
-        ? "Vos notes sont chargées : choisissez les fiches notées ou celles qui restent à noter."
+        ? t("home.personal_ready")
         : signedIn
-          ? "Vos notes n’ont pas pu être chargées ; le catalogue complet reste affiché."
-          : "Connectez-vous pour filtrer le catalogue selon vos notes.";
+          ? t("home.personal_failed")
+          : t("home.personal_signed_out");
     }
     renderPersonalButtons();
     apply();

@@ -1,6 +1,8 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.95.0/+esm";
 import { SITE_URL, SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from "./supabase-config.js";
 
+const { locale, t, tp, formatDate, formatNumber, collator } = window.BienPenserI18n;
+
 const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
   auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true },
 });
@@ -54,17 +56,19 @@ const setMessage = (element, message, kind = "") => {
 };
 
 const formatCount = (count) => {
-  if (!count) return "Aucune évaluation";
-  return `${count} évaluation${count > 1 ? "s" : ""}`;
+  if (!count) return t("score.none");
+  return tp("score.count", count, { count: formatNumber(count) });
 };
 
-const formatHearts = (count) => `${count} cœur${count > 1 ? "s" : ""}`;
+const formatHearts = (count) => tp("examples.heart_count", count, {
+  count: formatNumber(count),
+});
 
-const formatExampleDate = (value) => new Intl.DateTimeFormat("fr-FR", {
+const formatExampleDate = (value) => formatDate(value, {
   day: "numeric",
   month: "long",
   year: "numeric",
-}).format(new Date(value));
+});
 
 const openAuthDialog = () => {
   if (!authDialog) return;
@@ -90,16 +94,24 @@ document.querySelectorAll("[data-auth-tab]").forEach((button) => {
   });
 });
 
-const friendlyAuthError = (error) => {
-  const message = error?.message || "Une erreur est survenue.";
+const friendlySupabaseError = (error) => {
+  const code = String(error?.code || "").toLowerCase();
+  const message = String(error?.message || "");
   const translations = [
-    [/invalid login credentials/i, "Adresse e-mail ou mot de passe incorrect."],
-    [/user already registered/i, "Un compte existe déjà avec cette adresse."],
-    [/password should be at least/i, "Le mot de passe doit contenir au moins 6 caractères."],
-    [/email rate limit/i, "Trop d'e-mails ont été demandés. Réessayez un peu plus tard."],
-    [/unable to validate email/i, "Cette adresse e-mail n'est pas valide."],
+    ["auth_errors.invalid_credentials", ["invalid_credentials"], /invalid login credentials/i],
+    ["auth_errors.already_registered", ["user_already_exists"], /user already registered/i],
+    ["auth_errors.weak_password", ["weak_password"], /password should be at least/i],
+    [
+      "auth_errors.rate_limit",
+      ["over_email_send_rate_limit", "over_request_rate_limit"],
+      /(?:email|request) rate limit/i,
+    ],
+    ["auth_errors.invalid_email", ["email_address_invalid"], /(?:unable to validate|invalid) email/i],
   ];
-  return translations.find(([pattern]) => pattern.test(message))?.[1] || message;
+  const match = translations.find(([, codes, pattern]) => codes.includes(code) || pattern.test(message));
+  if (match) return t(match[0]);
+  console.error(error);
+  return t("auth_errors.generic");
 };
 
 document.querySelectorAll("[data-auth-form]").forEach((form) => {
@@ -108,7 +120,7 @@ document.querySelectorAll("[data-auth-form]").forEach((form) => {
     const submit = form.querySelector("button[type='submit']");
     const values = new FormData(form);
     submit.disabled = true;
-    setMessage(authMessage, "Connexion en cours…");
+    setMessage(authMessage, t("auth.progress"));
     try {
       if (form.dataset.authForm === "login") {
         const { error } = await supabase.auth.signInWithPassword({
@@ -116,7 +128,7 @@ document.querySelectorAll("[data-auth-form]").forEach((form) => {
           password: String(values.get("password")),
         });
         if (error) throw error;
-        setMessage(authMessage, "Connexion réussie.", "success");
+        setMessage(authMessage, t("auth.login_success"), "success");
         form.reset();
       } else {
         const displayName = String(values.get("display_name")).trim();
@@ -130,14 +142,14 @@ document.querySelectorAll("[data-auth-form]").forEach((form) => {
         });
         if (error) throw error;
         if (data.session) {
-          setMessage(authMessage, "Compte créé et connecté.", "success");
+          setMessage(authMessage, t("auth.account_created_connected"), "success");
         } else {
-          setMessage(authMessage, "Compte créé. Consultez votre e-mail pour confirmer votre inscription.", "success");
+          setMessage(authMessage, t("auth.account_created_confirm"), "success");
         }
         form.reset();
       }
     } catch (error) {
-      setMessage(authMessage, friendlyAuthError(error), "error");
+      setMessage(authMessage, friendlySupabaseError(error), "error");
     } finally {
       submit.disabled = false;
     }
@@ -287,7 +299,7 @@ const publishPersonalRatingState = () => {
 const renderAuth = () => {
   const signedIn = Boolean(state.user);
   document.querySelectorAll("[data-account-label]").forEach((label) => {
-    label.textContent = signedIn ? state.profile?.display_name || "Mon compte" : "Se connecter";
+    label.textContent = signedIn ? state.profile?.display_name || t("auth.account") : t("auth.sign_in");
   });
   document.querySelectorAll(".account-button").forEach((button) => {
     button.classList.toggle("is-connected", signedIn);
@@ -295,7 +307,7 @@ const renderAuth = () => {
   document.querySelector("[data-auth-anonymous]")?.toggleAttribute("hidden", signedIn);
   document.querySelector("[data-auth-profile]")?.toggleAttribute("hidden", !signedIn);
   const profileName = document.querySelector("[data-profile-name]");
-  if (profileName) profileName.textContent = state.profile?.display_name || "membre";
+  if (profileName) profileName.textContent = state.profile?.display_name || t("auth.member");
   document.querySelectorAll("[data-rating-signed-out]").forEach((panel) => {
     panel.hidden = signedIn;
   });
@@ -323,13 +335,13 @@ const renderReviewerAccess = () => {
       link.setAttribute("aria-label", link.dataset.reviewerAriaLabel);
       link.setAttribute("target", "_blank");
       link.setAttribute("rel", "noreferrer");
-      label.textContent = "Revoir la fiche";
+      label.textContent = t("card.review");
     } else {
       link.setAttribute("href", link.dataset.publicHref);
       link.setAttribute("aria-label", link.dataset.publicAriaLabel);
       link.removeAttribute("target");
       link.removeAttribute("rel");
-      label.textContent = "Lire la fiche";
+      label.textContent = t("card.read");
     }
   });
 };
@@ -344,7 +356,7 @@ const renderPersonalExamples = () => {
       ? state.personalExamples.get(slot.dataset.biasId)
       : null;
     if (personal) {
-      label.textContent = "Votre exemple";
+      label.textContent = t("card.your_example");
       text.textContent = personal.example_text;
     } else {
       label.textContent = defaults.label;
@@ -354,7 +366,7 @@ const renderPersonalExamples = () => {
     if (card) {
       const standardSearch = cardSearchDefaults.get(card) || card.dataset.search;
       card.dataset.search = personal
-        ? `${standardSearch} ${personal.example_text.toLocaleLowerCase("fr")}`
+        ? `${standardSearch} ${personal.example_text.toLocaleLowerCase(locale)}`
         : standardSearch;
     }
   });
@@ -375,8 +387,8 @@ const renderPersonalExampleEditors = () => {
     if (loading) {
       loading.hidden = !signedIn || state.personalExamplesReady;
       loading.textContent = state.personalExamplesError
-        ? "Votre exemple n’a pas pu être chargé. Réessayez après avoir rechargé la page."
-        : "Chargement de votre exemple…";
+        ? t("examples.load_failed")
+        : t("examples.loading");
     }
     if (!form || !textarea || !counter || !saveButton || !deleteButton) return;
     form.hidden = !signedIn || !state.personalExamplesReady;
@@ -385,8 +397,8 @@ const renderPersonalExampleEditors = () => {
     deleteButton.disabled = false;
     const personal = state.personalExamples.get(editor.dataset.biasId);
     textarea.value = personal?.example_text || "";
-    counter.textContent = `${textarea.value.length}/600`;
-    saveButton.textContent = personal ? "Enregistrer les modifications" : "Ajouter mon exemple";
+    counter.textContent = `${formatNumber(textarea.value.length)}/${formatNumber(600)}`;
+    saveButton.textContent = personal ? t("examples.save_existing") : t("examples.save_new");
     deleteButton.hidden = !personal;
   });
 };
@@ -408,22 +420,24 @@ const renderCommunityExamples = () => {
 
     if (!state.communityExamplesReady) {
       status.textContent = state.communityExamplesError
-        ? "Les exemples partagés n’ont pas pu être chargés."
-        : "Chargement des exemples partagés…";
-      total.textContent = "0";
-      totalLabel.textContent = "exemple partagé";
+        ? t("examples.shared_load_failed")
+        : t("examples.loading_shared");
+      total.textContent = formatNumber(0);
+      totalLabel.textContent = tp("examples.shared_count", 0, { count: formatNumber(0) });
       more.hidden = true;
       return;
     }
 
     const examples = state.communityExamples.get(gallery.dataset.biasId) || [];
-    total.textContent = String(examples.length);
-    totalLabel.textContent = examples.length > 1 ? "exemples partagés" : "exemple partagé";
+    total.textContent = formatNumber(examples.length);
+    totalLabel.textContent = tp("examples.shared_count", examples.length, {
+      count: formatNumber(examples.length),
+    });
     status.textContent = examples.length
       ? state.personalHeartsError
-        ? "Les compteurs sont visibles, mais le vote est temporairement indisponible."
+        ? t("examples.hearts_unavailable")
         : ""
-      : "Aucun exemple partagé pour l’instant. Soyez le premier à en ajouter un.";
+      : t("examples.empty");
     status.dataset.kind = state.personalHeartsError ? "error" : "";
 
     const visibleCount = Number.parseInt(gallery.dataset.visibleCount || "12", 10);
@@ -435,12 +449,12 @@ const renderCommunityExamples = () => {
       const meta = document.createElement("div");
       meta.className = "community-example-meta";
       const shared = document.createElement("span");
-      shared.textContent = "Exemple partagé";
+      shared.textContent = t("examples.shared_label");
       meta.appendChild(shared);
       const personal = state.personalExamples.get(gallery.dataset.biasId);
       if (state.user && personal?.id === example.example_id) {
         const own = document.createElement("strong");
-        own.textContent = "Votre exemple";
+        own.textContent = t("examples.own_label");
         meta.appendChild(own);
         article.classList.add("is-personal");
       }
@@ -463,14 +477,16 @@ const renderCommunityExamples = () => {
       heart.setAttribute("aria-pressed", String(liked));
       heart.setAttribute(
         "aria-label",
-        `${liked ? "Retirer votre cœur" : "Attribuer un cœur"} — ${formatHearts(example.heart_count)}`,
+        t(liked ? "examples.heart_remove_aria" : "examples.heart_add_aria", {
+          count: formatHearts(example.heart_count),
+        }),
       );
       heart.disabled = Boolean(state.user) && !state.personalHeartsReady;
       const symbol = document.createElement("span");
       symbol.setAttribute("aria-hidden", "true");
       symbol.textContent = liked ? "♥" : "♡";
       const count = document.createElement("span");
-      count.textContent = String(example.heart_count);
+      count.textContent = formatNumber(example.heart_count);
       heart.append(symbol, count);
       heart.addEventListener("click", () => toggleExampleHeart(example.example_id, gallery));
 
@@ -503,11 +519,11 @@ const renderCommunityScores = () => {
     const score = state.aggregates.get(element.dataset.communityScore);
     const value = element.querySelector("[data-score-value]");
     const count = element.querySelector("[data-score-count]");
-    value.textContent = score ? Math.round(score.average) : "—";
-    count.textContent = score ? formatCount(score.count) : "Aucune évaluation";
+    value.textContent = score ? formatNumber(Math.round(score.average)) : "—";
+    count.textContent = score ? formatCount(score.count) : t("score.none");
     element.classList.toggle("has-score", Boolean(score));
     element.classList.toggle("is-provisional", Boolean(score && score.count < 3));
-    if (score && score.count < 3) count.textContent += " · provisoire";
+    if (score && score.count < 3) count.textContent += ` · ${t("score.provisional")}`;
   });
 };
 
@@ -523,7 +539,7 @@ const renderRatingWidgets = () => {
     if (!input || !output || !deleteButton || !submitButton) return;
     submitButton.disabled = false;
     input.value = personalScore || 50;
-    output.textContent = input.value;
+    output.textContent = formatNumber(Number(input.value));
     deleteButton.hidden = !personalScore;
   });
 };
@@ -534,7 +550,7 @@ document.querySelectorAll("[data-rating-form]").forEach((form) => {
   const output = form.querySelector("[data-rating-output]");
   const message = form.querySelector("[data-rating-message]");
   input.addEventListener("input", () => {
-    output.textContent = input.value;
+    output.textContent = formatNumber(Number(input.value));
   });
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -542,7 +558,7 @@ document.querySelectorAll("[data-rating-form]").forEach((form) => {
     const context = captureSyncContext();
     const submit = form.querySelector("button[type='submit']");
     submit.disabled = true;
-    setMessage(message, "Enregistrement…");
+    setMessage(message, t("rating.saving"));
     const rating = {
       user_id: state.user.id,
       bias_id: widget.dataset.ratingWidget,
@@ -551,11 +567,11 @@ document.querySelectorAll("[data-rating-form]").forEach((form) => {
     const { error } = await supabase.from("ratings").upsert(rating, { onConflict: "user_id,bias_id" });
     if (!isCurrentSyncContext(context)) return;
     if (error) {
-      setMessage(message, error.message, "error");
+      setMessage(message, friendlySupabaseError(error), "error");
     } else {
       state.personal.set(rating.bias_id, rating.score);
       publishPersonalRatingState();
-      setMessage(message, "Votre note est enregistrée.", "success");
+      setMessage(message, t("rating.saved"), "success");
       await loadAggregates(context);
       if (!isCurrentSyncContext(context)) return;
       renderCommunityScores();
@@ -574,10 +590,10 @@ document.querySelectorAll("[data-rating-form]").forEach((form) => {
       .eq("user_id", state.user.id)
       .eq("bias_id", biasId);
     if (!isCurrentSyncContext(context)) return;
-    if (error) return setMessage(message, error.message, "error");
+    if (error) return setMessage(message, friendlySupabaseError(error), "error");
     state.personal.delete(biasId);
     publishPersonalRatingState();
-    setMessage(message, "Votre note a été supprimée.", "success");
+    setMessage(message, t("rating.deleted"), "success");
     await loadAggregates(context);
     if (!isCurrentSyncContext(context)) return;
     renderCommunityScores();
@@ -594,13 +610,13 @@ document.querySelectorAll("[data-example-form]").forEach((form) => {
   const saveButton = form.querySelector("[data-example-save]");
   const deleteButton = form.querySelector("[data-example-delete]");
   textarea.addEventListener("input", () => {
-    counter.textContent = `${textarea.value.length}/600`;
+    counter.textContent = `${formatNumber(textarea.value.length)}/${formatNumber(600)}`;
   });
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!state.user) return openAuthDialog();
     if (!state.personalExamplesReady) {
-      return setMessage(message, "Votre exemple doit d’abord être chargé.", "error");
+      return setMessage(message, t("examples.not_loaded"), "error");
     }
     const context = captureSyncContext();
     const biasId = editor.dataset.biasId;
@@ -608,13 +624,13 @@ document.querySelectorAll("[data-example-form]").forEach((form) => {
     if (exampleText.length < 10) {
       return setMessage(
         message,
-        "Votre exemple doit contenir au moins 10 caractères hors espaces.",
+        t("examples.minimum"),
         "error",
       );
     }
     saveButton.disabled = true;
     deleteButton.disabled = true;
-    setMessage(message, "Enregistrement…");
+    setMessage(message, t("examples.saving"));
     const current = state.personalExamples.get(biasId);
     const request = current
       ? supabase
@@ -630,7 +646,7 @@ document.querySelectorAll("[data-example-form]").forEach((form) => {
       .single();
     if (!isCurrentSyncContext(context)) return;
     if (error) {
-      setMessage(message, error.message, "error");
+      setMessage(message, friendlySupabaseError(error), "error");
     } else {
       state.personalExamples.set(biasId, data);
       renderPersonalExamples();
@@ -638,7 +654,7 @@ document.querySelectorAll("[data-example-form]").forEach((form) => {
       await loadCommunityExamples(context);
       if (!isCurrentSyncContext(context)) return;
       renderCommunityExamples();
-      setMessage(message, current ? "Votre exemple a été modifié." : "Votre exemple a été ajouté.", "success");
+      setMessage(message, t(current ? "examples.updated" : "examples.added"), "success");
     }
     saveButton.disabled = false;
     deleteButton.disabled = false;
@@ -648,10 +664,10 @@ document.querySelectorAll("[data-example-form]").forEach((form) => {
     const context = captureSyncContext();
     const biasId = editor.dataset.biasId;
     const current = state.personalExamples.get(biasId);
-    if (!current || !window.confirm("Supprimer votre exemple public pour ce biais ?")) return;
+    if (!current || !window.confirm(t("examples.confirm_delete"))) return;
     saveButton.disabled = true;
     deleteButton.disabled = true;
-    setMessage(message, "Suppression…");
+    setMessage(message, t("examples.deleting"));
     const { error } = await supabase
       .from("bias_examples")
       .delete()
@@ -659,7 +675,7 @@ document.querySelectorAll("[data-example-form]").forEach((form) => {
       .eq("bias_id", biasId);
     if (!isCurrentSyncContext(context)) return;
     if (error) {
-      setMessage(message, error.message, "error");
+      setMessage(message, friendlySupabaseError(error), "error");
       saveButton.disabled = false;
       deleteButton.disabled = false;
       return;
@@ -673,7 +689,7 @@ document.querySelectorAll("[data-example-form]").forEach((form) => {
     renderCommunityExamples();
     saveButton.disabled = false;
     deleteButton.disabled = false;
-    setMessage(message, "Votre exemple a été supprimé. L’exemple éditorial est de nouveau affiché.", "success");
+    setMessage(message, t("examples.deleted"), "success");
   });
 });
 
@@ -682,7 +698,7 @@ const toggleExampleHeart = async (exampleId, gallery) => {
   const context = captureSyncContext();
   const status = gallery.querySelector("[data-examples-status]");
   if (!state.personalHeartsReady) {
-    return setMessage(status, "Le vote n’est pas disponible pour le moment.", "error");
+    return setMessage(status, t("examples.vote_unavailable"), "error");
   }
   const examples = state.communityExamples.get(gallery.dataset.biasId) || [];
   const example = examples.find((candidate) => candidate.example_id === exampleId);
@@ -703,7 +719,7 @@ const toggleExampleHeart = async (exampleId, gallery) => {
   if (!isCurrentSyncContext(context)) return;
   if (error) {
     if (button) button.disabled = false;
-    return setMessage(status, error.message, "error");
+    return setMessage(status, friendlySupabaseError(error), "error");
   }
   if (liked) {
     state.personalHeartIds.delete(exampleId);
@@ -716,7 +732,7 @@ const toggleExampleHeart = async (exampleId, gallery) => {
   gallery.querySelector(`[data-example-heart="${exampleId}"]`)?.focus();
   setMessage(
     status,
-    liked ? "Votre cœur a été retiré." : "Votre cœur a été ajouté.",
+    t(liked ? "examples.heart_removed" : "examples.heart_added"),
     "success",
   );
 };
@@ -749,17 +765,21 @@ const leaderboardRows = Array.from(document.querySelectorAll("[data-leaderboard-
 
 const renderLeaderboard = () => {
   if (!leaderboardRows.length) return;
-  const query = (document.querySelector("[data-leaderboard-search]")?.value || "").trim().toLocaleLowerCase("fr");
+  const query = (document.querySelector("[data-leaderboard-search]")?.value || "")
+    .trim()
+    .toLocaleLowerCase(locale);
   const family = document.querySelector("[data-leaderboard-family]")?.value || "all";
   const scope = document.querySelector("[data-leaderboard-scope]")?.value || "all";
   const tbody = leaderboardRows[0].parentElement;
   const ordered = [...leaderboardRows].sort((left, right) => {
     const a = state.aggregates.get(left.dataset.biasId);
     const b = state.aggregates.get(right.dataset.biasId);
-    if (!a && !b) return left.dataset.name.localeCompare(right.dataset.name, "fr");
+    if (!a && !b) return collator.compare(left.dataset.name, right.dataset.name);
     if (!a) return 1;
     if (!b) return -1;
-    return b.average - a.average || b.count - a.count || left.dataset.name.localeCompare(right.dataset.name, "fr");
+    return b.average - a.average
+      || b.count - a.count
+      || collator.compare(left.dataset.name, right.dataset.name);
   });
   let rank = 0;
   let total = 0;
@@ -771,17 +791,23 @@ const renderLeaderboard = () => {
       && (scope === "all" || (scope === "rated" && aggregate) || (scope === "mine" && personal));
     row.hidden = !show;
     if (show) rank += 1;
-    row.querySelector("[data-rank]").textContent = aggregate ? String(rank) : "—";
-    row.querySelector("[data-score]").textContent = aggregate ? aggregate.average.toFixed(1).replace(".0", "") : "—";
-    row.querySelector("[data-median]").textContent = aggregate ? aggregate.median.toFixed(1).replace(".0", "") : "—";
-    row.querySelector("[data-count]").textContent = aggregate ? String(aggregate.count) : "0";
-    row.querySelector("[data-personal]").textContent = personal ? `${personal}/100` : "—";
+    row.querySelector("[data-rank]").textContent = aggregate ? formatNumber(rank) : "—";
+    row.querySelector("[data-score]").textContent = aggregate
+      ? formatNumber(aggregate.average, { maximumFractionDigits: 1 })
+      : "—";
+    row.querySelector("[data-median]").textContent = aggregate
+      ? formatNumber(aggregate.median, { maximumFractionDigits: 1 })
+      : "—";
+    row.querySelector("[data-count]").textContent = aggregate ? formatNumber(aggregate.count) : formatNumber(0);
+    row.querySelector("[data-personal]").textContent = personal
+      ? `${formatNumber(personal)}/${formatNumber(100)}`
+      : "—";
     row.classList.toggle("is-provisional", Boolean(aggregate && aggregate.count < 3));
     if (aggregate) total += aggregate.count;
     tbody.appendChild(row);
   });
   const totalElement = document.querySelector("[data-ratings-total]");
-  if (totalElement) totalElement.textContent = String(total);
+  if (totalElement) totalElement.textContent = formatNumber(total);
 };
 
 document.querySelectorAll("[data-leaderboard-search], [data-leaderboard-family], [data-leaderboard-scope]").forEach((control) => {

@@ -40,6 +40,9 @@ jobs:
           node --check web/assets/app.js
           node --check web/assets/install.js
           node --check web/assets/community.js
+          node --check web/assets/i18n.js
+          node --check web/assets/language.js
+          node --check web/assets/not-found.js
 
       - name: Enregistrer le nouvel état
         env:
@@ -50,7 +53,7 @@ jobs:
           else
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add catalogue/biais
+            git add catalogue/biais catalogue/i18n
             git commit -m "Mettre à jour l'état de revue (#${ISSUE_NUMBER})"
             git push origin main
           fi
@@ -79,6 +82,9 @@ jobs:
           node --check web/assets/app.js
           node --check web/assets/install.js
           node --check web/assets/community.js
+          node --check web/assets/i18n.js
+          node --check web/assets/language.js
+          node --check web/assets/not-found.js
 
       - name: Générer le site statique
         run: python scripts/build_site.py --output _site

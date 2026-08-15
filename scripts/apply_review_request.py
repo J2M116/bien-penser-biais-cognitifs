@@ -8,10 +8,29 @@ import re
 from datetime import date
 from pathlib import Path
 
-from set_review_status import CONTENT_DIR, scalar, update_review
+from set_review_status import CONTENT_DIR, LOCALE_CONTENT_DIRS, scalar, update_review
 
 
-REQUEST_PATTERN = re.compile(r"^REVUE \| (demarrer|terminer) \| ([0-9]{3}-[a-z0-9-]+)$")
+REQUEST_PATTERN = re.compile(
+    r"^REVUE \| (demarrer|terminer) \| (fr|en) \| ([0-9]{3}-[a-z0-9-]+)$"
+)
+LEGACY_REQUEST_PATTERN = re.compile(
+    r"^REVUE \| (demarrer|terminer) \| ([0-9]{3}-[a-z0-9-]+)$"
+)
+
+
+def parse_request(title: str) -> tuple[str, str, str]:
+    match = REQUEST_PATTERN.fullmatch(title)
+    if match:
+        action, locale, slug = match.groups()
+        return action, locale, slug
+
+    legacy_match = LEGACY_REQUEST_PATTERN.fullmatch(title)
+    if legacy_match:
+        action, slug = legacy_match.groups()
+        return action, "fr", slug
+
+    raise ValueError("Titre de demande de revue invalide")
 
 
 def apply_request(
@@ -20,12 +39,10 @@ def apply_request(
     content_dir: Path = CONTENT_DIR,
     review_date: date | None = None,
 ) -> tuple[Path, str, bool]:
-    match = REQUEST_PATTERN.fullmatch(title)
-    if not match:
-        raise ValueError("Titre de demande de revue invalide")
-    action, slug = match.groups()
-    path = (content_dir / f"{slug}.md").resolve()
-    if path.parent != content_dir.resolve() or not path.is_file():
+    action, locale, slug = parse_request(title)
+    target_dir = content_dir if locale == "fr" else LOCALE_CONTENT_DIRS[locale]
+    path = (target_dir / f"{slug}.md").resolve()
+    if path.parent != target_dir.resolve() or not path.is_file():
         raise ValueError(f"Fiche inconnue : {slug}")
 
     text = path.read_text(encoding="utf-8")
@@ -33,8 +50,15 @@ def apply_request(
     if len(pieces) != 3:
         raise ValueError(f"En-tête YAML invalide : {path}")
     front = pieces[1]
-    if scalar(front, "status") != "documente":
-        raise ValueError("Seules les fiches documentées peuvent entrer en revue")
+    publication_key, publication_value = (
+        ("status", "documente")
+        if locale == "fr"
+        else ("translation_status", "published")
+    )
+    if scalar(front, publication_key) != publication_value:
+        if locale == "fr":
+            raise ValueError("Seules les fiches documentées peuvent entrer en revue")
+        raise ValueError("Seules les traductions publiées peuvent entrer en revue")
     current_status = scalar(front, "review_status") or "non_revue"
 
     if action == "demarrer":

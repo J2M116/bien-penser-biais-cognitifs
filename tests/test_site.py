@@ -3,9 +3,11 @@ from __future__ import annotations
 import json
 import re
 import struct
+import subprocess
 import sys
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from dataclasses import replace
 from datetime import date
 from html.parser import HTMLParser
@@ -36,6 +38,45 @@ class LinkParser(HTMLParser):
                 self.links.append(candidate)
 
 
+class PageMetadataParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.html_lang: str | None = None
+        self.canonicals: list[str] = []
+        self.alternates: dict[str, str] = {}
+        self.manifests: list[str] = []
+        self.language_choices: list[dict[str, str | None]] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attr_map = dict(attrs)
+        if tag == "html":
+            self.html_lang = attr_map.get("lang")
+        elif tag == "link":
+            rel = attr_map.get("rel")
+            href = attr_map.get("href")
+            if rel == "canonical" and href:
+                self.canonicals.append(href)
+            elif rel == "alternate" and href and attr_map.get("hreflang"):
+                self.alternates[attr_map["hreflang"] or ""] = href
+            elif rel == "manifest" and href:
+                self.manifests.append(href)
+        elif tag == "a" and attr_map.get("data-language-choice"):
+            self.language_choices.append(attr_map)
+
+
+def dictionary_shape(value: object, prefix: str = "") -> dict[str, tuple[str, int | None]]:
+    shape: dict[str, tuple[str, int | None]] = {}
+    if isinstance(value, dict):
+        for key, child in value.items():
+            child_prefix = f"{prefix}.{key}" if prefix else key
+            shape.update(dictionary_shape(child, child_prefix))
+    elif isinstance(value, list):
+        shape[prefix] = ("list", len(value))
+    else:
+        shape[prefix] = (type(value).__name__, None)
+    return shape
+
+
 class SiteBuildTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -49,25 +90,200 @@ class SiteBuildTests(unittest.TestCase):
 
     def test_expected_pages_are_generated(self) -> None:
         self.assertEqual(len(self.biases), 39)
-        self.assertTrue((self.output / "index.html").is_file())
-        self.assertTrue((self.output / "a-propos" / "index.html").is_file())
-        self.assertTrue((self.output / "classement" / "index.html").is_file())
+        self.assertEqual(len(list(self.output.rglob("*.html"))), 85)
+        for page in ("index.html", "a-propos/index.html", "classement/index.html"):
+            self.assertTrue((self.output / page).is_file(), page)
+        for page in ("en/index.html", "en/about/index.html", "en/ranking/index.html"):
+            self.assertTrue((self.output / page).is_file(), page)
         self.assertTrue((self.output / "404.html").is_file())
-        self.assertEqual(len(list((self.output / "biais").glob("*/index.html"))), 39)
+        french_pages = list((self.output / "biais").glob("*/index.html"))
+        english_pages = list((self.output / "en" / "biases").glob("*/index.html"))
+        self.assertEqual(len(french_pages), 39)
+        self.assertEqual(len(english_pages), 39)
+        self.assertEqual(
+            {page.parent.name for page in french_pages},
+            {page.parent.name for page in english_pages},
+        )
+
+    def test_ui_dictionaries_have_identical_complete_shapes(self) -> None:
+        french = json.loads((build_site.I18N_DIR / "fr" / "ui.json").read_text(encoding="utf-8"))
+        english = json.loads((build_site.I18N_DIR / "en" / "ui.json").read_text(encoding="utf-8"))
+        french_shape = dictionary_shape(french)
+        english_shape = dictionary_shape(english)
+        self.assertEqual(french_shape, english_shape)
+        self.assertGreaterEqual(len(french_shape), 250)
+
+        for locale, catalogue in (("fr", french), ("en", english)):
+            for key, value in build_site.flatten_runtime_strings(catalogue).items():
+                if isinstance(value, str):
+                    self.assertTrue(value.strip(), f"{locale}: {key}")
+                else:
+                    self.assertIsInstance(value, dict, f"{locale}: {key}")
+                    self.assertEqual(set(value), {"one", "other"}, f"{locale}: {key}")
+                    self.assertTrue(all(str(item).strip() for item in value.values()), f"{locale}: {key}")
+
+    def test_i18n_runtime_formats_text_plurals_numbers_and_dates_in_both_locales(self) -> None:
+        i18n_path = PROJECT_ROOT / "web" / "assets" / "i18n.js"
+        script = """
+const fs = require("node:fs");
+const vm = require("node:vm");
+const source = fs.readFileSync(__I18N_PATH__, "utf8");
+
+const evaluate = (locale, localeTag, greeting, one, other) => {
+  const payload = {
+    locale,
+    localeTag,
+    strings: {
+      greeting,
+      "items.count": { one, other },
+    },
+  };
+  const window = {};
+  const document = {
+    documentElement: { lang: locale },
+    querySelector: (selector) => selector === "#app-translations"
+      ? { textContent: JSON.stringify(payload) }
+      : null,
+  };
+  vm.runInNewContext(source, { window, document, console, Intl, Date, JSON, Object, Number, String });
+  const api = window.BienPenserI18n;
+  return {
+    text: api.t("greeting", { name: "Ada" }),
+    one: api.tp("items.count", 1),
+    other: api.tp("items.count", 2),
+    number: api.formatNumber(1234.5),
+    date: api.formatDate("2026-08-15"),
+  };
+};
+
+const result = {
+  fr: evaluate("fr", "fr-FR", "Bonjour {name}", "{count} élément", "{count} éléments"),
+  en: evaluate("en", "en-GB", "Hello {name}", "{count} item", "{count} items"),
+};
+process.stdout.write(JSON.stringify(result));
+""".replace("__I18N_PATH__", json.dumps(str(i18n_path)))
+        completed = subprocess.run(
+            ["node", "-e", script],
+            cwd=PROJECT_ROOT,
+            text=True,
+            capture_output=True,
+            check=True,
+            timeout=10,
+        )
+        result = json.loads(completed.stdout)
+        self.assertEqual(
+            result["fr"],
+            {
+                "text": "Bonjour Ada",
+                "one": "1 élément",
+                "other": "2 éléments",
+                "number": "1\u202f234,5",
+                "date": "15 août 2026",
+            },
+        )
+        self.assertEqual(
+            result["en"],
+            {
+                "text": "Hello Ada",
+                "one": "1 item",
+                "other": "2 items",
+                "number": "1,234.5",
+                "date": "15 August 2026",
+            },
+        )
+
+    def test_all_english_translations_are_published_and_complete(self) -> None:
+        translation_dir = build_site.I18N_DIR / "en" / "biais"
+        translations = {path.stem: path for path in translation_dir.glob("*.md")}
+        canonical = {bias.slug: bias for bias in self.biases}
+        self.assertEqual(set(translations), set(canonical))
+        self.assertEqual(len(translations), 39)
+
+        required_sections = [
+            "Short",
+            "Example",
+            "Detailed description",
+            "Why it matters",
+            "Limits and nuances",
+            "Prevention",
+            "Sources",
+        ]
+        forbidden_shared_metadata = {
+            "source_number",
+            "name_en",
+            "name_fr",
+            "aliases_en",
+            "aliases_fr",
+            "family",
+            "importance",
+            "importance_status",
+            "evidence_level",
+            "fact_checking_relevant",
+            "source",
+        }
+        forbidden_placeholders = ("to be written", "to be translated", "todo", "placeholder")
+
+        for slug, base in canonical.items():
+            path = translations[slug]
+            pieces = path.read_text(encoding="utf-8").split("---", 2)
+            self.assertEqual(len(pieces), 3, path)
+            front, body = pieces[1], pieces[2].strip()
+            self.assertEqual(build_site.parse_scalar(front, "schema_version"), 1, path)
+            self.assertEqual(build_site.parse_scalar(front, "locale"), "en", path)
+            self.assertEqual(build_site.parse_scalar(front, "translation_of"), base.bias_id, path)
+            self.assertEqual(build_site.parse_scalar(front, "translation_status"), "published", path)
+            self.assertIn(build_site.parse_scalar(front, "review_status"), build_site.REVIEW_STATUSES, path)
+            reviewed_on = build_site.parse_scalar(front, "reviewed_on")
+            if reviewed_on is not None:
+                date.fromisoformat(str(reviewed_on))
+            self.assertEqual(build_site.parse_scalar(front, "translated_on"), "2026-08-15", path)
+            for key in forbidden_shared_metadata:
+                self.assertIsNone(build_site.parse_scalar(front, key), f"{path}: {key}")
+
+            heading = re.search(r"^# (.+)$", body, flags=re.MULTILINE)
+            self.assertIsNotNone(heading, path)
+            self.assertEqual(heading.group(1), base.name_en, path)
+            self.assertEqual(re.findall(r"^## (.+)$", body, flags=re.MULTILINE), required_sections, path)
+            for section_title in required_sections:
+                self.assertTrue(build_site.section(body, section_title).strip(), f"{path}: {section_title}")
+            self.assertEqual(
+                len(build_site.bullet_values(build_site.section(body, "Prevention"))),
+                2,
+                path,
+            )
+            translated_sources = build_site.source_values(build_site.section(body, "Sources"))
+            self.assertEqual(
+                [url for _label, url in translated_sources],
+                [url for _label, url in base.sources],
+                path,
+            )
+            self.assertFalse(any(token in body.casefold() for token in forbidden_placeholders), path)
+            translated = build_site.read_translation(base, "en")
+            self.assertIsNotNone(translated, path)
+            self.assertEqual(translated.locale, "en", path)
 
     def test_pwa_manifest_and_icons_are_generated(self) -> None:
-        manifest_path = self.output / "assets" / "manifest.webmanifest"
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        self.assertEqual(manifest["name"], "Bien penser — Les biais cognitifs")
-        self.assertEqual(manifest["short_name"], "Bien penser")
-        self.assertEqual(manifest["lang"], "fr")
-        self.assertEqual(manifest["display"], "standalone")
-        self.assertEqual(manifest["start_url"], "../")
-        self.assertEqual(manifest["scope"], "../")
-        self.assertEqual((manifest_path.parent / manifest["start_url"]).resolve(), self.output.resolve())
-        self.assertEqual((manifest_path.parent / manifest["scope"]).resolve(), self.output.resolve())
-        self.assertEqual(manifest["theme_color"], "#15273f")
-        self.assertEqual(manifest["background_color"], "#f3eee5")
+        assets = self.output / "assets"
+        manifests = {
+            "fr": (assets / "manifest.webmanifest", "../", "Bien penser — Les biais cognitifs"),
+            "en": (assets / "manifest.en.webmanifest", "../en/", "Bien penser — Cognitive Biases"),
+        }
+        parsed: dict[str, dict[str, object]] = {}
+        for locale, (manifest_path, start_url, name) in manifests.items():
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            parsed[locale] = manifest
+            self.assertEqual(manifest["name"], name)
+            self.assertEqual(manifest["short_name"], "Bien penser")
+            self.assertEqual(manifest["lang"], locale)
+            self.assertEqual(manifest["id"], "../")
+            self.assertEqual(manifest["display"], "standalone")
+            self.assertEqual(manifest["start_url"], start_url)
+            self.assertEqual(manifest["scope"], "../")
+            self.assertEqual((manifest_path.parent / manifest["scope"]).resolve(), self.output.resolve())
+            self.assertTrue((manifest_path.parent / manifest["start_url"]).resolve().is_dir())
+            self.assertEqual(manifest["theme_color"], "#15273f")
+            self.assertEqual(manifest["background_color"], "#f3eee5")
+        self.assertEqual(parsed["fr"]["icons"], parsed["en"]["icons"])
 
         expected_sizes = {
             "icons/icon-192.png": (192, 192),
@@ -76,18 +292,18 @@ class SiteBuildTests(unittest.TestCase):
             "icons/apple-touch-icon.png": (180, 180),
             "icons/favicon-32.png": (32, 32),
         }
-        purposes = {icon["purpose"] for icon in manifest["icons"]}
+        purposes = {icon["purpose"] for icon in parsed["fr"]["icons"]}
         self.assertEqual(purposes, {"any", "maskable"})
         for relative_path, dimensions in expected_sizes.items():
-            image_path = manifest_path.parent / relative_path
+            image_path = assets / relative_path
             self.assertTrue(image_path.is_file(), relative_path)
             data = image_path.read_bytes()
             self.assertEqual(data[:8], b"\x89PNG\r\n\x1a\n")
             self.assertEqual(struct.unpack(">II", data[16:24]), dimensions)
 
     def test_every_page_has_installable_metadata_with_resolving_paths(self) -> None:
-        pages = list(self.output.rglob("*.html"))
-        self.assertEqual(len(pages), 43)
+        pages = [page for page in self.output.rglob("*.html") if page.name != "404.html"]
+        self.assertEqual(len(pages), 84)
         for page in pages:
             content = page.read_text(encoding="utf-8")
             self.assertEqual(content.count('rel="manifest"'), 1, page)
@@ -96,37 +312,171 @@ class SiteBuildTests(unittest.TestCase):
             self.assertIn('name="apple-mobile-web-app-capable" content="yes"', content, page)
             self.assertIn('name="apple-mobile-web-app-title" content="Bien penser"', content, page)
             self.assertIn('id="install-dialog"', content, page)
-            self.assertIn("Partager", content, page)
-            self.assertIn("Sur l’écran d’accueil", content, page)
-            self.assertIn('class="mobile-nav"', content, page)
-            if page.name != "404.html":
-                self.assertIn("data-install-open hidden", content, page)
+            self.assertIn('class="mobile-nav', content, page)
+            self.assertIn("data-install-open hidden", content, page)
 
-        not_found = (self.output / "404.html").read_text(encoding="utf-8")
-        self.assertIn(f'href="{build_site.PUBLIC_SITE_URL}assets/manifest.webmanifest"', not_found)
-        self.assertIn(f'href="{build_site.PUBLIC_SITE_URL}"', not_found)
-        self.assertNotIn('href="assets/manifest.webmanifest"', not_found)
+            parser = PageMetadataParser()
+            parser.feed(content)
+            relative_parts = page.relative_to(self.output).parts
+            locale = "en" if relative_parts[0] == "en" else "fr"
+            expected_manifest = "manifest.en.webmanifest" if locale == "en" else "manifest.webmanifest"
+            self.assertEqual(len(parser.manifests), 1, page)
+            manifest_target = (page.parent / parser.manifests[0]).resolve()
+            self.assertEqual(manifest_target, (self.output / "assets" / expected_manifest).resolve(), page)
+            self.assertIn(build_site.t(locale, "install.button"), content, page)
+            self.assertIn(build_site.t(locale, "install.title"), content, page)
 
     def test_home_contains_cards_and_controls(self) -> None:
-        home = (self.output / "index.html").read_text(encoding="utf-8")
-        self.assertEqual(home.count('data-bias-card'), 39)
-        self.assertEqual(home.count('data-bias-card data-bias-id="'), 39)
-        self.assertEqual(home.count('data-example-slot'), 39)
-        self.assertEqual(home.count('data-example-text'), 39)
-        self.assertIn('id="search"', home)
-        self.assertIn('id="importance-filter"', home)
-        self.assertIn('id="evidence-filter"', home)
-        self.assertIn('id="review-filter"', home)
-        self.assertIn('data-family-filter="all"', home)
-        self.assertIn('href="classement/"', home)
-        self.assertEqual(home.count('data-community-score="'), 39)
-        self.assertIn('data-personal-scope="all" aria-pressed="true"', home)
-        self.assertIn('data-personal-scope="mine" aria-pressed="false" disabled', home)
-        self.assertIn('data-personal-scope="unrated" aria-pressed="false" disabled', home)
-        self.assertIn('data-personal-filter-status aria-live="polite"', home)
-        review_states = ("non_revue", "en_revue", "revue")
-        self.assertEqual(sum(home.count(f'data-review="{state}"') for state in review_states), 39)
-        self.assertEqual(sum(home.count(f'review-state--{state}">') for state in review_states), 39)
+        homes = {
+            "fr": (self.output / "index.html", 'href="classement/"'),
+            "en": (self.output / "en" / "index.html", 'href="ranking/"'),
+        }
+        for locale, (path, leaderboard_href) in homes.items():
+            home = path.read_text(encoding="utf-8")
+            self.assertEqual(home.count('data-bias-card'), 39, path)
+            self.assertEqual(home.count('data-bias-card data-bias-id="'), 39, path)
+            self.assertEqual(home.count('data-example-slot'), 39, path)
+            self.assertEqual(home.count('data-example-text'), 39, path)
+            self.assertIn('id="search"', home, path)
+            self.assertIn('id="importance-filter"', home, path)
+            self.assertIn('id="evidence-filter"', home, path)
+            self.assertIn('id="review-filter"', home, path)
+            self.assertIn('data-family-filter="all"', home, path)
+            self.assertIn(leaderboard_href, home, path)
+            self.assertEqual(home.count('data-community-score="'), 39, path)
+            self.assertIn('data-personal-scope="all" aria-pressed="true"', home, path)
+            self.assertIn('data-personal-scope="mine" aria-pressed="false" disabled', home, path)
+            self.assertIn('data-personal-scope="unrated" aria-pressed="false" disabled', home, path)
+            self.assertIn('data-personal-filter-status aria-live="polite"', home, path)
+            self.assertIn(build_site.t(locale, "home.title_line_1"), home, path)
+            review_states = ("non_revue", "en_revue", "revue")
+            self.assertEqual(sum(home.count(f'data-review="{state}"') for state in review_states), 39, path)
+            self.assertEqual(sum(home.count(f'review-state--{state}">') for state in review_states), 39, path)
+
+    def test_routes_canonical_hreflang_and_language_switcher_are_paired(self) -> None:
+        routes: list[tuple[str, str | None]] = [
+            ("home", None),
+            ("about", None),
+            ("leaderboard", None),
+        ]
+        routes.extend(("bias", bias.slug) for bias in self.biases)
+
+        for route, slug in routes:
+            localized_paths = {
+                locale: build_site.route_path(locale, route, slug)
+                for locale in build_site.SUPPORTED_LOCALES
+            }
+            expected_alternates = {
+                "fr": build_site.public_url(localized_paths["fr"]),
+                "en": build_site.public_url(localized_paths["en"]),
+                "x-default": build_site.public_url(localized_paths["fr"]),
+            }
+            for locale, current_path in localized_paths.items():
+                page = self.output / current_path / "index.html" if current_path else self.output / "index.html"
+                parser = PageMetadataParser()
+                parser.feed(page.read_text(encoding="utf-8"))
+                self.assertEqual(parser.html_lang, locale, page)
+                self.assertEqual(parser.canonicals, [build_site.public_url(current_path)], page)
+                self.assertEqual(parser.alternates, expected_alternates, page)
+
+                for candidate, candidate_path in localized_paths.items():
+                    expected_href = build_site.relative_href(current_path, candidate_path)
+                    matching = [
+                        choice
+                        for choice in parser.language_choices
+                        if choice.get("data-language-choice") == candidate
+                        and choice.get("href") == expected_href
+                    ]
+                    self.assertTrue(matching, f"{page}: missing {candidate} selector to {expected_href}")
+                    if candidate == locale:
+                        self.assertTrue(
+                            any(choice.get("aria-current") == "page" for choice in matching),
+                            f"{page}: current language is not exposed",
+                        )
+
+    def test_language_preference_is_remembered_and_suggested_without_redirect(self) -> None:
+        language = (PROJECT_ROOT / "web" / "assets" / "language.js").read_text(encoding="utf-8")
+        self.assertIn('const LOCALE_KEY = "bienpenser.locale"', language)
+        self.assertIn('writeStorage("localStorage", LOCALE_KEY, locale)', language)
+        self.assertIn('readStorage("localStorage", LOCALE_KEY)', language)
+        self.assertIn("window.navigator.languages", language)
+        self.assertIn('document.body.classList.contains("home-page")', language)
+        self.assertIn("suggestion.hidden = false", language)
+        self.assertNotIn("window.location.replace", language)
+        self.assertNotIn("window.location.assign", language)
+
+        for locale, page in (
+            ("fr", self.output / "index.html"),
+            ("en", self.output / "en" / "index.html"),
+        ):
+            content = page.read_text(encoding="utf-8")
+            other = "en" if locale == "fr" else "fr"
+            self.assertIn(
+                f'data-language-suggestion data-suggestion-locale="{other}" hidden',
+                content,
+                page,
+            )
+
+    def test_bilingual_404_is_noindex_and_uses_absolute_project_urls(self) -> None:
+        page = (self.output / "404.html").read_text(encoding="utf-8")
+        self.assertIn('<meta name="robots" content="noindex">', page)
+        self.assertEqual(page.count('data-not-found-locale="fr"'), 1)
+        self.assertEqual(page.count('data-not-found-locale="en"'), 1)
+        self.assertIn(build_site.t("fr", "not_found.title"), page)
+        self.assertIn(build_site.t("en", "not_found.title"), page)
+        self.assertIn(f'href="{build_site.PUBLIC_SITE_URL}"', page)
+        self.assertIn(f'href="{build_site.PUBLIC_SITE_URL}en/"', page)
+        for asset in (
+            "assets/styles.css",
+            "assets/not-found.js",
+            "assets/icons/apple-touch-icon.png",
+            "assets/icons/favicon-32.png",
+        ):
+            self.assertIn(f'"{build_site.PUBLIC_SITE_URL}{asset}"', page)
+        self.assertNotIn('rel="canonical"', page)
+        self.assertNotIn('rel="manifest"', page)
+
+        script = (self.output / "assets" / "not-found.js").read_text(encoding="utf-8")
+        self.assertIn('const EN_PATH_PREFIX = "/bien-penser-biais-cognitifs/en/"', script)
+        self.assertIn('window.localStorage.getItem("bienpenser.locale")', script)
+        self.assertIn("window.navigator.languages", script)
+        self.assertIn("document.documentElement.lang = locale", script)
+
+    def test_sitemap_contains_every_localized_canonical_and_alternate(self) -> None:
+        root = ET.fromstring((self.output / "sitemap.xml").read_text(encoding="utf-8"))
+        sitemap_ns = "{http://www.sitemaps.org/schemas/sitemap/0.9}"
+        xhtml_ns = "{http://www.w3.org/1999/xhtml}"
+        entries = root.findall(f"{sitemap_ns}url")
+        self.assertEqual(len(entries), 84)
+
+        route_pairs: list[tuple[str, str | None]] = [
+            ("home", None),
+            ("about", None),
+            ("leaderboard", None),
+        ]
+        route_pairs.extend(("bias", bias.slug) for bias in self.biases)
+        expected_by_url: dict[str, dict[str, str]] = {}
+        for route, slug in route_pairs:
+            french = build_site.public_url(build_site.route_path("fr", route, slug))
+            english = build_site.public_url(build_site.route_path("en", route, slug))
+            alternates = {"fr": french, "en": english, "x-default": french}
+            expected_by_url[french] = alternates
+            expected_by_url[english] = alternates
+
+        actual_by_url: dict[str, dict[str, str]] = {}
+        for entry in entries:
+            location = entry.findtext(f"{sitemap_ns}loc")
+            self.assertIsNotNone(location)
+            actual_by_url[str(location)] = {
+                str(link.attrib.get("hreflang")): str(link.attrib.get("href"))
+                for link in entry.findall(f"{xhtml_ns}link")
+            }
+        self.assertEqual(actual_by_url, expected_by_url)
+        self.assertNotIn(f"{build_site.PUBLIC_SITE_URL}404.html", actual_by_url)
+        self.assertEqual(
+            (self.output / "robots.txt").read_text(encoding="utf-8"),
+            f"Sitemap: {build_site.PUBLIC_SITE_URL}sitemap.xml\n",
+        )
 
     def test_every_source_card_has_review_metadata(self) -> None:
         for source in build_site.CONTENT_DIR.glob("*.md"):
@@ -149,13 +499,20 @@ class SiteBuildTests(unittest.TestCase):
         self.assertIn('class="review-panel-locked" data-reviewer-locked', detail)
 
     def test_review_transition_link_prepares_a_github_request(self) -> None:
-        bias = replace(self.biases[0], review_status="non_revue", reviewed_on=None)
-        request = build_site.review_request_url(bias, "demarrer")
-        query = parse_qs(urlsplit(request).query)
-        self.assertEqual(query["title"], [f"REVUE | demarrer | {bias.slug}"])
-        detail = build_site.render_detail(bias, None, None)
-        self.assertIn("Passer en revue", detail)
-        self.assertIn("issues/new?", detail)
+        french = replace(self.biases[0], review_status="non_revue", reviewed_on=None)
+        english_translation = build_site.read_translation(self.biases[0], "en")
+        self.assertIsNotNone(english_translation)
+        english = replace(english_translation, review_status="non_revue", reviewed_on=None)
+        for bias in (french, english):
+            request = build_site.review_request_url(bias, "demarrer")
+            query = parse_qs(urlsplit(request).query)
+            self.assertEqual(
+                query["title"],
+                [f"REVUE | demarrer | {bias.locale} | {bias.slug}"],
+            )
+            detail = build_site.render_detail(bias, None, None)
+            self.assertIn(build_site.t(bias.locale, "review.start"), detail)
+            self.assertIn("issues/new?", detail)
 
     def test_reviewed_card_displays_its_date_in_french(self) -> None:
         bias = replace(self.biases[0], review_status="revue", reviewed_on="2026-08-10")
@@ -173,7 +530,24 @@ class SiteBuildTests(unittest.TestCase):
             self.assertIn('review_status: "en_revue"', content)
             self.assertIn('reviewed_on: "2026-08-10"', content)
 
-    def test_github_request_applies_both_review_transitions(self) -> None:
+    def test_review_status_helper_inserts_fields_after_the_locale_specific_anchor(self) -> None:
+        fixtures = {
+            "fr": '---\nstatus: "documente"\nevidence_level: "forte"\n---\n\n# Carte\n',
+            "en": '---\nlocale: "en"\ntranslation_status: "published"\n---\n\n# Card\n',
+        }
+        anchors = {"fr": "evidence_level", "en": "translation_status"}
+        with tempfile.TemporaryDirectory() as temporary:
+            for locale, fixture in fixtures.items():
+                card = Path(temporary) / f"{locale}.md"
+                card.write_text(fixture, encoding="utf-8")
+                set_review_status.update_review(card, "en_revue")
+                front = card.read_text(encoding="utf-8").split("---", 2)[1]
+                lines = [line for line in front.splitlines() if line]
+                anchor_index = next(i for i, line in enumerate(lines) if line.startswith(f"{anchors[locale]}:"))
+                self.assertEqual(lines[anchor_index + 1], 'review_status: "en_revue"')
+                self.assertEqual(lines[anchor_index + 2], "reviewed_on: null")
+
+    def test_legacy_github_request_applies_both_french_review_transitions(self) -> None:
         bias = self.biases[0]
         with tempfile.TemporaryDirectory() as temporary:
             content_dir = Path(temporary)
@@ -191,48 +565,163 @@ class SiteBuildTests(unittest.TestCase):
             self.assertIn('review_status: "revue"', content)
             self.assertIn('reviewed_on: "2026-08-10"', content)
 
+    def test_localized_github_requests_apply_french_and_english_review_transitions(self) -> None:
+        base = self.biases[0]
+        english = build_site.read_translation(base, "en")
+        self.assertIsNotNone(english)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary_root = Path(temporary)
+            french_dir = temporary_root / "fr"
+            english_dir = temporary_root / "en"
+            french_dir.mkdir()
+            english_dir.mkdir()
+            french_card = french_dir / f"{base.slug}.md"
+            english_card = english_dir / f"{base.slug}.md"
+            french_card.write_text(base.canonical_source_path.read_text(encoding="utf-8"), encoding="utf-8")
+            english_card.write_text(english.source_path.read_text(encoding="utf-8"), encoding="utf-8")
+
+            previous_english_dir = apply_review_request.LOCALE_CONTENT_DIRS["en"]
+            apply_review_request.LOCALE_CONTENT_DIRS["en"] = english_dir
+            try:
+                for locale, content_dir in (("fr", french_dir), ("en", english_dir)):
+                    start = f"REVUE | demarrer | {locale} | {base.slug}"
+                    finish = f"REVUE | terminer | {locale} | {base.slug}"
+                    apply_review_request.apply_request(start, content_dir=content_dir)
+                    apply_review_request.apply_request(
+                        finish,
+                        content_dir=content_dir,
+                        review_date=date(2026, 8, 15),
+                    )
+                    card = french_card if locale == "fr" else english_card
+                    content = card.read_text(encoding="utf-8")
+                    self.assertIn('review_status: "revue"', content)
+                    self.assertIn('reviewed_on: "2026-08-15"', content)
+            finally:
+                apply_review_request.LOCALE_CONTENT_DIRS["en"] = previous_english_dir
+
+    def test_review_request_format_rejects_unknown_locales_and_path_traversal(self) -> None:
+        slug = self.biases[0].slug
+        self.assertEqual(
+            apply_review_request.parse_request(f"REVUE | demarrer | fr | {slug}"),
+            ("demarrer", "fr", slug),
+        )
+        self.assertEqual(
+            apply_review_request.parse_request(f"REVUE | terminer | en | {slug}"),
+            ("terminer", "en", slug),
+        )
+        self.assertEqual(
+            apply_review_request.parse_request(f"REVUE | demarrer | {slug}"),
+            ("demarrer", "fr", slug),
+        )
+        for invalid in (
+            f"REVUE | demarrer | de | {slug}",
+            "REVUE | demarrer | en | ../../secret",
+            f"REVUE | publier | en | {slug}",
+            f"REVUE | demarrer | en | {slug} | extra",
+        ):
+            with self.assertRaises(ValueError, msg=invalid):
+                apply_review_request.parse_request(invalid)
+
+    def test_review_requests_reject_unpublished_french_and_english_cards(self) -> None:
+        base = self.biases[0]
+        english = build_site.read_translation(base, "en")
+        self.assertIsNotNone(english)
+        with tempfile.TemporaryDirectory() as temporary:
+            temporary_root = Path(temporary)
+            french_dir = temporary_root / "fr"
+            english_dir = temporary_root / "en"
+            french_dir.mkdir()
+            english_dir.mkdir()
+            (french_dir / f"{base.slug}.md").write_text(
+                base.source_path.read_text(encoding="utf-8").replace(
+                    'status: "documente"',
+                    'status: "brouillon"',
+                    1,
+                ),
+                encoding="utf-8",
+            )
+            (english_dir / f"{base.slug}.md").write_text(
+                english.source_path.read_text(encoding="utf-8").replace(
+                    'translation_status: "published"',
+                    'translation_status: "draft"',
+                    1,
+                ),
+                encoding="utf-8",
+            )
+            previous_english_dir = apply_review_request.LOCALE_CONTENT_DIRS["en"]
+            apply_review_request.LOCALE_CONTENT_DIRS["en"] = english_dir
+            try:
+                with self.assertRaises(ValueError):
+                    apply_review_request.apply_request(
+                        f"REVUE | demarrer | fr | {base.slug}",
+                        content_dir=french_dir,
+                    )
+                with self.assertRaises(ValueError):
+                    apply_review_request.apply_request(
+                        f"REVUE | demarrer | en | {base.slug}",
+                        content_dir=french_dir,
+                    )
+            finally:
+                apply_review_request.LOCALE_CONTENT_DIRS["en"] = previous_english_dir
+
     def test_review_workflow_is_restricted_to_the_repository_owner(self) -> None:
         workflow = (PROJECT_ROOT / ".github" / "workflows" / "review-state.yml").read_text(encoding="utf-8")
         self.assertIn("github.actor_id == '158738352'", workflow)
         self.assertNotIn("github.actor ==", workflow)
         self.assertIn("contents: write", workflow)
         self.assertIn("issues: write", workflow)
+        self.assertIn("git add catalogue/biais catalogue/i18n", workflow)
 
     def test_detail_contains_authentication_and_rating_widget(self) -> None:
-        detail = next((self.output / "biais").glob("*/index.html")).read_text(encoding="utf-8")
-        self.assertIn('id="auth-dialog"', detail)
-        self.assertIn('data-rating-widget="', detail)
-        self.assertIn("Votre évaluation", detail)
-        self.assertIn('type="range" min="1" max="100"', detail)
-        self.assertIn('data-example-editor data-bias-id="', detail)
-        self.assertIn('textarea id="personal-example-', detail)
-        self.assertIn('minlength="10" maxlength="600"', detail)
-        self.assertIn('data-example-gallery data-bias-id="', detail)
-        self.assertIn('data-examples-list aria-busy="true"', detail)
-        self.assertIn('data-example-slot data-bias-id="', detail)
-        self.assertIn('type="module" src="../../assets/community.js"', detail)
+        details = {
+            "fr": (next((self.output / "biais").glob("*/index.html")), "../../assets/community.js"),
+            "en": (next((self.output / "en" / "biases").glob("*/index.html")), "../../../assets/community.js"),
+        }
+        for locale, (path, community_src) in details.items():
+            detail = path.read_text(encoding="utf-8")
+            self.assertIn('id="auth-dialog"', detail, path)
+            self.assertIn('data-rating-widget="', detail, path)
+            self.assertIn(build_site.t(locale, "rating.your_rating"), detail, path)
+            self.assertIn('type="range" min="1" max="100"', detail, path)
+            self.assertIn('data-example-editor data-bias-id="', detail, path)
+            self.assertIn('textarea id="personal-example-', detail, path)
+            self.assertIn('minlength="10" maxlength="600"', detail, path)
+            self.assertIn('data-example-gallery data-bias-id="', detail, path)
+            self.assertIn('data-examples-list aria-busy="true"', detail, path)
+            self.assertIn('data-example-slot data-bias-id="', detail, path)
+            self.assertIn(f'type="module" src="{community_src}"', detail, path)
 
     def test_every_detail_contains_the_personal_editor_and_public_gallery(self) -> None:
-        pages = list((self.output / "biais").glob("*/index.html"))
-        self.assertEqual(len(pages), 39)
-        for page in pages:
-            detail = page.read_text(encoding="utf-8")
-            self.assertEqual(detail.count("data-example-editor"), 1, page)
-            self.assertEqual(detail.count("data-example-gallery"), 1, page)
-            self.assertEqual(detail.count("data-example-slot"), 1, page)
-            self.assertIn("Cet exemple sera visible publiquement", detail, page)
-            self.assertIn("data-example-signed-out", detail, page)
-            self.assertIn("data-example-delete hidden", detail, page)
-            self.assertIn('data-examples-status role="status" aria-live="polite"', detail, page)
+        localized_pages = {
+            "fr": list((self.output / "biais").glob("*/index.html")),
+            "en": list((self.output / "en" / "biases").glob("*/index.html")),
+        }
+        for locale, pages in localized_pages.items():
+            self.assertEqual(len(pages), 39)
+            for page in pages:
+                detail = page.read_text(encoding="utf-8")
+                self.assertEqual(detail.count("data-example-editor"), 1, page)
+                self.assertEqual(detail.count("data-example-gallery"), 1, page)
+                self.assertEqual(detail.count("data-example-slot"), 1, page)
+                self.assertIn(build_site.t(locale, "examples.public_note"), detail, page)
+                self.assertIn("data-example-signed-out", detail, page)
+                self.assertIn("data-example-delete hidden", detail, page)
+                self.assertIn('data-examples-status role="status" aria-live="polite"', detail, page)
 
     def test_leaderboard_contains_all_documented_biases(self) -> None:
-        leaderboard = (self.output / "classement" / "index.html").read_text(encoding="utf-8")
-        self.assertEqual(leaderboard.count("data-leaderboard-row"), 39)
-        self.assertIn("Classement communautaire", leaderboard)
-        self.assertIn("Score moyen", leaderboard)
-        self.assertIn("Votre note", leaderboard)
-        for label in ("Rang", "Biais", "Score moyen", "Médiane", "Notes", "Votre note"):
-            self.assertEqual(leaderboard.count(f'data-label="{label}"'), 39)
+        leaderboards = {
+            "fr": self.output / "classement" / "index.html",
+            "en": self.output / "en" / "ranking" / "index.html",
+        }
+        keys = ("rank", "bias", "average", "median", "ratings", "your_rating")
+        for locale, path in leaderboards.items():
+            leaderboard = path.read_text(encoding="utf-8")
+            self.assertEqual(leaderboard.count("data-leaderboard-row"), 39, path)
+            self.assertIn(build_site.t(locale, "leaderboard.title"), leaderboard, path)
+            for key in keys:
+                label = build_site.t(locale, f"leaderboard.{key}")
+                self.assertEqual(leaderboard.count(f'data-label="{label}"'), 39, path)
 
     def test_supabase_schema_enforces_private_single_rating(self) -> None:
         schema = (PROJECT_ROOT / "supabase" / "migrations" / "20260813061613_community_ratings.sql").read_text(encoding="utf-8")
@@ -313,8 +802,17 @@ class SiteBuildTests(unittest.TestCase):
         self.assertIn("text.textContent = example.example_text", community)
         self.assertIn("text.replaceChildren", community)
         self.assertIn("exampleText.length < 10", community)
-        self.assertIn("au moins 10 caractères hors espaces", community)
-        self.assertIn("L’exemple éditorial est de nouveau affiché", community)
+        self.assertIn('t("examples.minimum")', community)
+        self.assertIn('t(current ? "examples.updated" : "examples.added")', community)
+        self.assertIn('t("examples.deleted")', community)
+        self.assertEqual(
+            build_site.t("fr", "examples.minimum"),
+            "Votre exemple doit contenir au moins 10 caractères hors espaces.",
+        )
+        self.assertEqual(
+            build_site.t("en", "examples.minimum"),
+            "Your example must contain at least 10 non-space characters.",
+        )
         self.assertIn("isCurrentSyncContext", community)
         self.assertIn("syncEpoch += 1", community)
         self.assertIn("personalHeartsError", community)
@@ -336,9 +834,15 @@ class SiteBuildTests(unittest.TestCase):
             build_position = workflow.rfind("python scripts/build_site.py --output _site")
             self.assertGreaterEqual(tests_position, 0, workflow_path)
             self.assertGreater(build_position, tests_position, workflow_path)
-            self.assertIn("node --check web/assets/app.js", workflow)
-            self.assertIn("node --check web/assets/install.js", workflow)
-            self.assertIn("node --check web/assets/community.js", workflow)
+            for script in (
+                "app.js",
+                "install.js",
+                "community.js",
+                "i18n.js",
+                "language.js",
+                "not-found.js",
+            ):
+                self.assertIn(f"node --check web/assets/{script}", workflow, workflow_path)
 
         review_workflow = (PROJECT_ROOT / ".github" / "workflows" / "review-state.yml").read_text(
             encoding="utf-8"
@@ -400,13 +904,33 @@ class SiteBuildTests(unittest.TestCase):
         self.assertIn("import { SITE_URL,", community)
 
     def test_documented_content_has_no_placeholders(self) -> None:
-        forbidden = ("à rédiger", "à traduire", "à ajouter", "à documenter")
-        for page in (self.output / "biais").glob("*/index.html"):
-            content = page.read_text(encoding="utf-8").lower()
-            self.assertFalse(any(term in content for term in forbidden), page)
-            self.assertIn("description détaillée", content)
-            self.assertIn("limites et nuances", content)
-            self.assertIn("deux réflexes utiles", content)
+        localized = {
+            "fr": (
+                (self.output / "biais").glob("*/index.html"),
+                ("à rédiger", "à traduire", "à ajouter", "à documenter"),
+            ),
+            "en": (
+                (self.output / "en" / "biases").glob("*/index.html"),
+                ("to be written", "to be translated", "to be added", "todo", "placeholder"),
+            ),
+        }
+        for locale, (pages, forbidden) in localized.items():
+            for page in pages:
+                content = page.read_text(encoding="utf-8")
+                visible_markup = re.sub(
+                    r"<script\b[^>]*>.*?</script>",
+                    "",
+                    content,
+                    flags=re.IGNORECASE | re.DOTALL,
+                ).casefold()
+                self.assertFalse(any(term in visible_markup for term in forbidden), page)
+                self.assertIn(
+                    build_site.t(locale, "detail.detailed_description").casefold(),
+                    visible_markup,
+                    page,
+                )
+                self.assertIn(build_site.t(locale, "detail.limits").casefold(), visible_markup, page)
+                self.assertIn(build_site.t(locale, "detail.prevention").casefold(), visible_markup, page)
 
     def test_all_local_links_resolve(self) -> None:
         missing: list[tuple[Path, str]] = []

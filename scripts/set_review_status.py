@@ -11,6 +11,11 @@ from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 CONTENT_DIR = PROJECT_ROOT / "catalogue" / "biais"
+EN_CONTENT_DIR = PROJECT_ROOT / "catalogue" / "i18n" / "en" / "biais"
+LOCALE_CONTENT_DIRS = {
+    "fr": CONTENT_DIR,
+    "en": EN_CONTENT_DIR,
+}
 REVIEW_STATUSES = ("non_revue", "en_revue", "revue")
 
 
@@ -38,6 +43,8 @@ def upsert(front: str, key: str, rendered_value: str, *, after: str) -> str:
 
 
 def update_review(path: Path, status: str, reviewed_on: str | None = None) -> str | None:
+    if status not in REVIEW_STATUSES:
+        raise ValueError(f"État de revue invalide : {status}")
     text = path.read_text(encoding="utf-8")
     pieces = text.split("---", 2)
     if len(pieces) != 3:
@@ -53,7 +60,12 @@ def update_review(path: Path, status: str, reviewed_on: str | None = None) -> st
     else:
         final_date = previous_date
 
-    front = upsert(front, "review_status", f'"{status}"', after="evidence_level")
+    review_anchor = (
+        "translation_status"
+        if re.search(r"^translation_status:", front, flags=re.MULTILINE)
+        else "evidence_level"
+    )
+    front = upsert(front, "review_status", f'"{status}"', after=review_anchor)
     rendered_date = f'"{final_date}"' if final_date else "null"
     front = upsert(front, "reviewed_on", rendered_date, after="review_status")
     path.write_text(f"---{front}---{body}", encoding="utf-8")
@@ -69,8 +81,12 @@ def main() -> None:
 
     path = args.file if args.file.is_absolute() else PROJECT_ROOT / args.file
     path = path.resolve()
-    if path.parent != CONTENT_DIR.resolve() or path.suffix != ".md" or not path.is_file():
-        parser.error("le fichier doit être une fiche Markdown existante de catalogue/biais/")
+    allowed_directories = {directory.resolve() for directory in LOCALE_CONTENT_DIRS.values()}
+    if path.parent not in allowed_directories or path.suffix != ".md" or not path.is_file():
+        parser.error(
+            "le fichier doit être une fiche Markdown existante de catalogue/biais/ "
+            "ou catalogue/i18n/en/biais/"
+        )
     if args.date and args.status != "revue":
         parser.error("--date s'utilise uniquement avec le statut revue")
 
